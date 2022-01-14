@@ -1,5 +1,5 @@
+use fancy_regex::{escape, Regex};
 use lazy_static::lazy_static;
-use regex::{escape, Regex};
 use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -61,12 +61,13 @@ struct Token {
 
 lazy_static! {
     // Regexes copied from Jinja's lexer logic
-    static ref WHITESPACE_RE: Regex = Regex::new(r"\s+").unwrap();
-    static ref NEWLINE_RE: Regex = Regex::new(r"(\r\n|\r|\n)").unwrap();
+    static ref WHITESPACE_RE: Regex = Regex::new(r"^\s+").unwrap();
+    static ref NEWLINE_RE: Regex = Regex::new(r"^(\r\n|\r|\n)").unwrap();
     static ref STRING_RE: Regex =
-        Regex::new(r#"(?s)('([^'\\]*(?:\\.[^'\\]*)*)'" r'|"([^"\\]*(?:\\.[^"\\]*)*)")"#).unwrap();
+        Regex::new(r#"(?s)^('([^'\\]*(?:\\.[^'\\]*)*)'" r'|"([^"\\]*(?:\\.[^"\\]*)*)")"#).unwrap();
     static ref INTEGER_RE: Regex = Regex::new(
         r#"(?ix)
+        ^
         (
             0b(_?[0-1])+    # binary
         |
@@ -83,7 +84,9 @@ lazy_static! {
     .unwrap();
     static ref FLOAT_RE: Regex = Regex::new(
         r#"(?ix)
-        (?<!\.)                 # doesn't start with a .
+        ^
+        # TODO: CHECK IN APPLICATION LOGIC
+        # (?<!\.)                 # doesn't start with a . (for "tuple.0.0")
         (\d+_)*\d+              # digits, possibly _ separated
         (
             (\.(\d+_)*\d+)?     # optional fractional part
@@ -96,7 +99,7 @@ lazy_static! {
     .unwrap();
     // Copy-pasted from https://github.com/pallets/jinja/blob/4a33989236671e3a1b78718bc45d890616a4f75e/src/jinja2/_identifier.py
     static ref NAME_RE: Regex = Regex::new(
-        r#"[\w·̀-ͯ·҃-֑҇-ׇֽֿׁׂׅׄؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۤۧۨ-ܑۭܰ-݊ަ-ް߫-߽߳ࠖ-࠙ࠛ-ࠣࠥ-ࠧࠩ-࡙࠭-࡛࣓-ࣣ࣡-ःऺ-़ा-ॏ॑-ॗॢॣঁ-ঃ়া-ৄেৈো-্ৗৢৣ৾ਁ-ਃ਼ਾ-ੂੇੈੋ-੍ੑੰੱੵઁ-ઃ઼ા-ૅે-ૉો-્ૢૣૺ-૿ଁ-ଃ଼ା-ୄେୈୋ-୍ୖୗୢୣஂா-ூெ-ைொ-்ௗఀ-ఄా-ౄె-ైొ-్ౕౖౢౣಁ-ಃ಼ಾ-ೄೆ-ೈೊ-್ೕೖೢೣഀ-ഃ഻഼ാ-ൄെ-ൈൊ-്ൗൢൣංඃ්ා-ුූෘ-ෟෲෳัิ-ฺ็-๎ັິ-ູົຼ່-ໍ༹༘༙༵༷༾༿ཱ-྄྆྇ྍ-ྗྙ-ྼ࿆ါ-ှၖ-ၙၞ-ၠၢ-ၤၧ-ၭၱ-ၴႂ-ႍႏႚ-ႝ፝-፟ᜒ-᜔ᜲ-᜴ᝒᝓᝲᝳ឴-៓៝᠋-᠍ᢅᢆᢩᤠ-ᤫᤰ-᤻ᨗ-ᨛᩕ-ᩞ᩠-᩿᩼᪰-᪽ᬀ-ᬄ᬴-᭄᭫-᭳ᮀ-ᮂᮡ-ᮭ᯦-᯳ᰤ-᰷᳐-᳔᳒-᳨᳭ᳲ-᳴᳷-᳹᷀-᷹᷻-᷿‿⁀⁔⃐-⃥⃜⃡-⃰℘℮⳯-⵿⳱ⷠ-〪ⷿ-゙゚〯꙯ꙴ-꙽ꚞꚟ꛰꛱ꠂ꠆ꠋꠣ-ꠧꢀꢁꢴ-ꣅ꣠-꣱ꣿꤦ-꤭ꥇ-꥓ꦀ-ꦃ꦳-꧀ꧥꨩ-ꨶꩃꩌꩍꩻ-ꩽꪰꪲ-ꪴꪷꪸꪾ꪿꫁ꫫ-ꫯꫵ꫶ꯣ-ꯪ꯬꯭ﬞ︀-️︠-︯︳︴﹍-﹏＿𐇽𐋠𐍶-𐍺𐨁-𐨃𐨅𐨆𐨌-𐨏𐨸-𐨿𐨺𐫦𐫥𐴤-𐽆𐴧-𐽐𑀀-𑀂𑀸-𑁆𑁿-𑂂𑂰-𑂺𑄀-𑄂𑄧-𑄴𑅅𑅆𑅳𑆀-𑆂𑆳-𑇀𑇉-𑇌𑈬-𑈷𑈾𑋟-𑋪𑌀-𑌃𑌻𑌼𑌾-𑍄𑍇𑍈𑍋-𑍍𑍗𑍢𑍣𑍦-𑍬𑍰-𑍴𑐵-𑑆𑑞𑒰-𑓃𑖯-𑖵𑖸-𑗀𑗜𑗝𑘰-𑙀𑚫-𑚷𑜝-𑜫𑠬-𑠺𑨁-𑨊𑨳-𑨹𑨻-𑨾𑩇𑩑-𑩛𑪊-𑪙𑰯-𑰶𑰸-𑰿𑲒-𑲧𑲩-𑲶𑴱-𑴶𑴺𑴼𑴽𑴿-𑵅𑵇𑶊-𑶎𑶐𑶑𑶓-𑶗𑻳-𑻶𖫰-𖫴𖬰-𖬶𖽑-𖽾𖾏-𖾒𛲝𛲞𝅥-𝅩𝅭-𝅲𝅻-𝆂𝆅-𝆋𝆪-𝆭𝉂-𝉄𝨀-𝨶𝨻-𝩬𝩵𝪄𝪛-𝪟𝪡-𝪯𞀀-𞀆𞀈-𞀘𞀛-𞀡𞀣𞀤𞀦-𞣐𞀪-𞣖𞥄-𞥊󠄀-󠇯]+"#
+        r#"^[\w·̀-ͯ·҃-֑҇-ׇֽֿׁׂׅׄؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۤۧۨ-ܑۭܰ-݊ަ-ް߫-߽߳ࠖ-࠙ࠛ-ࠣࠥ-ࠧࠩ-࡙࠭-࡛࣓-ࣣ࣡-ःऺ-़ा-ॏ॑-ॗॢॣঁ-ঃ়া-ৄেৈো-্ৗৢৣ৾ਁ-ਃ਼ਾ-ੂੇੈੋ-੍ੑੰੱੵઁ-ઃ઼ા-ૅે-ૉો-્ૢૣૺ-૿ଁ-ଃ଼ା-ୄେୈୋ-୍ୖୗୢୣஂா-ூெ-ைொ-்ௗఀ-ఄా-ౄె-ైొ-్ౕౖౢౣಁ-ಃ಼ಾ-ೄೆ-ೈೊ-್ೕೖೢೣഀ-ഃ഻഼ാ-ൄെ-ൈൊ-്ൗൢൣංඃ්ා-ුූෘ-ෟෲෳัิ-ฺ็-๎ັິ-ູົຼ່-ໍ༹༘༙༵༷༾༿ཱ-྄྆྇ྍ-ྗྙ-ྼ࿆ါ-ှၖ-ၙၞ-ၠၢ-ၤၧ-ၭၱ-ၴႂ-ႍႏႚ-ႝ፝-፟ᜒ-᜔ᜲ-᜴ᝒᝓᝲᝳ឴-៓៝᠋-᠍ᢅᢆᢩᤠ-ᤫᤰ-᤻ᨗ-ᨛᩕ-ᩞ᩠-᩿᩼᪰-᪽ᬀ-ᬄ᬴-᭄᭫-᭳ᮀ-ᮂᮡ-ᮭ᯦-᯳ᰤ-᰷᳐-᳔᳒-᳨᳭ᳲ-᳴᳷-᳹᷀-᷹᷻-᷿‿⁀⁔⃐-⃥⃜⃡-⃰℘℮⳯-⵿⳱ⷠ-〪ⷿ-゙゚〯꙯ꙴ-꙽ꚞꚟ꛰꛱ꠂ꠆ꠋꠣ-ꠧꢀꢁꢴ-ꣅ꣠-꣱ꣿꤦ-꤭ꥇ-꥓ꦀ-ꦃ꦳-꧀ꧥꨩ-ꨶꩃꩌꩍꩻ-ꩽꪰꪲ-ꪴꪷꪸꪾ꪿꫁ꫫ-ꫯꫵ꫶ꯣ-ꯪ꯬꯭ﬞ︀-️︠-︯︳︴﹍-﹏＿𐇽𐋠𐍶-𐍺𐨁-𐨃𐨅𐨆𐨌-𐨏𐨸-𐨿𐨺𐫦𐫥𐴤-𐽆𐴧-𐽐𑀀-𑀂𑀸-𑁆𑁿-𑂂𑂰-𑂺𑄀-𑄂𑄧-𑄴𑅅𑅆𑅳𑆀-𑆂𑆳-𑇀𑇉-𑇌𑈬-𑈷𑈾𑋟-𑋪𑌀-𑌃𑌻𑌼𑌾-𑍄𑍇𑍈𑍋-𑍍𑍗𑍢𑍣𑍦-𑍬𑍰-𑍴𑐵-𑑆𑑞𑒰-𑓃𑖯-𑖵𑖸-𑗀𑗜𑗝𑘰-𑙀𑚫-𑚷𑜝-𑜫𑠬-𑠺𑨁-𑨊𑨳-𑨹𑨻-𑨾𑩇𑩑-𑩛𑪊-𑪙𑰯-𑰶𑰸-𑰿𑲒-𑲧𑲩-𑲶𑴱-𑴶𑴺𑴼𑴽𑴿-𑵅𑵇𑶊-𑶎𑶐𑶑𑶓-𑶗𑻳-𑻶𖫰-𖫴𖬰-𖬶𖽑-𖽾𖾏-𖾒𛲝𛲞𝅥-𝅩𝅭-𝅲𝅻-𝆂𝆅-𝆋𝆪-𝆭𝉂-𝉄𝨀-𝨶𝨻-𝩬𝩵𝪄𝪛-𝪟𝪡-𝪯𞀀-𞀆𞀈-𞀘𞀛-𞀡𞀣𞀤𞀦-𞣐𞀪-𞣖𞥄-𞥊󠄀-󠇯]+"#
     ).unwrap();
 
     // Operator-related
@@ -134,7 +137,7 @@ lazy_static! {
         .collect();
     static ref OPERATOR_RE: Regex = Regex::new(
         format!(
-            "{}",
+            "^{}",
             {
                 let mut operator_vec = Vec::from_iter(OPERATORS.iter());
                 operator_vec.sort_by(|(op_a, _), (op_b, _)| {
@@ -152,35 +155,45 @@ lazy_static! {
     // - block {%%},
     // - comment {##},
     // - and variable strings {{}}
-    static ref BLOCK_START_RE_STR: String = escape(r"{%");
-    static ref BLOCK_END_RE_STR: String = escape(r"%}");
-    static ref COMMENT_START_RE_STR: String = escape(r"{#");
-    static ref COMMENT_END_RE_STR: String = escape(r"#}");
-    static ref VARIABLE_START_RE_STR: String = escape(r"{{");
-    static ref VARIABLE_END_RE_STR: String = escape(r"}}");
+    static ref BLOCK_START_RE_STR: String = escape(r"{%").to_string();
+    static ref BLOCK_END_RE_STR: String = escape(r"%}").to_string();
+    static ref COMMENT_START_RE_STR: String = escape(r"{#").to_string();
+    static ref COMMENT_END_RE_STR: String = escape(r"#}").to_string();
+    static ref VARIABLE_START_RE_STR: String = escape(r"{{").to_string();
+    static ref VARIABLE_END_RE_STR: String = escape(r"}}").to_string();
 
-    static ref BLOCK_START_RE: Regex = Regex::new(&BLOCK_START_RE_STR).unwrap();
-    static ref BLOCK_END_RE: Regex = Regex::new(&BLOCK_END_RE_STR).unwrap();
-    static ref COMMENT_START_RE: Regex = Regex::new(&COMMENT_START_RE_STR).unwrap();
-    static ref COMMENT_END_RE: Regex = Regex::new(&COMMENT_END_RE_STR).unwrap();
-    // TODO: check that this regex actually works
-    static ref VARIABLE_START_RE: Regex = Regex::new(&VARIABLE_START_RE_STR).unwrap();
-    static ref VARIABLE_END_RE: Regex = Regex::new(&VARIABLE_END_RE_STR).unwrap();
+    static ref BLOCK_START_RE: Regex = Regex::new(
+        &("^".to_owned() + &BLOCK_START_RE_STR)
+    ).unwrap();
+    static ref BLOCK_END_RE: Regex = Regex::new(
+        &("^".to_owned() + &BLOCK_END_RE_STR)
+    ).unwrap();
+    static ref COMMENT_START_RE: Regex = Regex::new(
+        &("^".to_owned() + &COMMENT_START_RE_STR)
+    ).unwrap();
+    static ref COMMENT_END_RE: Regex = Regex::new(
+        &("^".to_owned() + &COMMENT_END_RE_STR)
+    ).unwrap();
+    static ref VARIABLE_START_RE: Regex = Regex::new(
+        &("^".to_owned() + &VARIABLE_START_RE_STR)
+    ).unwrap();
+    static ref VARIABLE_END_RE: Regex = Regex::new(
+        &("^".to_owned() + &VARIABLE_END_RE_STR)
+    ).unwrap();
 
     // should match {% raw %} and variations
     // except +%}
     static ref RAW_START_RE: Regex = Regex::new(
         format!(
-            r"(?ms){0}(\-|\+|)\s*raw\s*(\-|){1}",
+            r"(?ms)^{0}(\-|\+|)\s*raw\s*(\-|){1}",
             *BLOCK_START_RE_STR,
             *BLOCK_END_RE_STR
         ).as_ref()
     ).unwrap();
     // should match {% endraw %} and variations
-    // except +%}
     static ref RAW_END_RE: Regex = Regex::new(
         format!(
-            r"(?ms){0}(\-|\+|)\s*endraw\s*(\+|\-|){1}",
+            r"(?ms)^{0}(\-|\+|)\s*endraw\s*(\+|\-|){1}",
             *BLOCK_START_RE_STR,
             *BLOCK_END_RE_STR
         ).as_ref()
@@ -249,8 +262,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_regex() {
-        println!("{:?}", *OPERATOR_RE);
-        println!("{:?}", *RAW_START_RE);
+    fn test_float_regex() {
+        assert_eq!(FLOAT_RE.is_match(".1").unwrap(), false);
+        assert_eq!(FLOAT_RE.is_match("0.2").unwrap(), true);
+        assert_eq!(FLOAT_RE.is_match("3_4.5_6").unwrap(), true);
+        assert_eq!(FLOAT_RE.is_match("30_4.50_6e-7_80_9").unwrap(), true);
+        assert_eq!(FLOAT_RE.is_match("0__0.2").unwrap(), false);
+
+        assert_eq!(FLOAT_RE.find(".2.9").unwrap().map(|m| m.end()), None);
+        assert_eq!(FLOAT_RE.find(" 0.2").unwrap().map(|m| m.end()), None);
+        assert_eq!(FLOAT_RE.find("0.2 test").unwrap().map(|m| m.end()), Some(3));
+    }
+
+    #[test]
+    fn test_int_regex() {
+        assert_eq!(INTEGER_RE.is_match("1").unwrap(), true);
+        assert_eq!(INTEGER_RE.is_match("0b0_1").unwrap(), true);
+        assert_eq!(INTEGER_RE.is_match("0o01234_567").unwrap(), true);
+        assert_eq!(INTEGER_RE.is_match("0o8").unwrap(), true);
+        assert_eq!(INTEGER_RE.is_match("0xdeadbeef888").unwrap(), true);
+        assert_eq!(INTEGER_RE.is_match("0_00").unwrap(), true);
+
+        assert_eq!(INTEGER_RE.find("02").unwrap().map(|m| m.end()), Some(1));
+        assert_eq!(INTEGER_RE.find("0_1").unwrap().map(|m| m.end()), Some(1));
+        assert_eq!(INTEGER_RE.find("0_02").unwrap().map(|m| m.end()), Some(3));
+        assert_eq!(INTEGER_RE.find("0_00").unwrap().map(|m| m.end()), Some(4));
+        assert_eq!(
+            INTEGER_RE.find("23_0__0").unwrap().map(|m| m.end()),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn test_variable_regex() {
+        assert_eq!(VARIABLE_START_RE.is_match("{{").unwrap(), true);
+        assert_eq!(VARIABLE_END_RE.is_match("}}").unwrap(), true);
+    }
+
+    #[test]
+    fn test_raw_start_regex() {
+        assert_eq!(RAW_START_RE.is_match("{% raw %}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{%- raw %}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{%+ raw %}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{% raw -%}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{% raw +%}").unwrap(), false);
+        assert_eq!(RAW_START_RE.is_match("{% \n raw %}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{% raw \n %}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{% \n raw \n %}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{%- raw -%}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{%+ raw -%}").unwrap(), true);
+        assert_eq!(RAW_START_RE.is_match("{%+ raw +%}").unwrap(), false);
+        assert_eq!(RAW_START_RE.is_match("{%+ raw +%}").unwrap(), false);
+    }
+
+    #[test]
+    fn test_raw_end_regex() {
+        assert_eq!(RAW_END_RE.is_match("{% endraw %}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{%- endraw %}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{%+ endraw %}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{% endraw -%}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{% endraw +%}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{% \n endraw %}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{% endraw \n %}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{% \n endraw \n %}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{%- endraw -%}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{%+ endraw -%}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{%+ endraw +%}").unwrap(), true);
+        assert_eq!(RAW_END_RE.is_match("{%+ endraw +%}").unwrap(), true);
     }
 }
