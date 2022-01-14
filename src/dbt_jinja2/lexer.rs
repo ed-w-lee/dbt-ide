@@ -140,7 +140,10 @@ lazy_static! {
                 operator_vec.sort_by(|(op_a, _), (op_b, _)| {
                     op_b.len().partial_cmp(&op_a.len()).unwrap()
                 });
-                operator_vec.into_iter().map(|(&op, _)| escape(op)).collect::<Vec<_>>().join("|")
+                operator_vec.into_iter()
+                    .map(|(&op, _)| escape(op))
+                    .collect::<Vec<_>>()
+                    .join("|")
             }
         ).as_ref()
     ).unwrap();
