@@ -168,13 +168,13 @@ lazy_static! {
         &(COMMENT_START_RE_STR.clone() + &WHITESPACE_IGNORING_CONFIG_STR)
     ).unwrap();
     static ref COMMENT_END_RE: Regex = Regex::new(
-        &COMMENT_END_RE_STR
+        &(WHITESPACE_IGNORING_CONFIG_STR.clone() + &COMMENT_END_RE_STR)
     ).unwrap();
     static ref VARIABLE_START_RE: Regex = Regex::new(
-        &VARIABLE_START_RE_STR
+        &(VARIABLE_START_RE_STR.clone() + &WHITESPACE_IGNORING_CONFIG_STR)
     ).unwrap();
     static ref VARIABLE_END_RE: Regex = Regex::new(
-        &VARIABLE_END_RE_STR
+        &(WHITESPACE_IGNORING_CONFIG_STR.clone() + &VARIABLE_END_RE_STR)
     ).unwrap();
     static ref UNKNOWN_RE: Regex = Regex::new(
         "."
@@ -366,6 +366,21 @@ enum MatchType {
 #[derive(Debug)]
 struct Lexer {}
 
+fn process_token(kind: TokenKind, input: &str) -> Token {
+    match kind {
+        TokenKind::Operator => Token {
+            kind: *OPERATORS
+                .get(input)
+                .expect(&format!("unable to find TokenKind for \"{}\"", input)),
+            len: input.len(),
+        },
+        _ => Token {
+            kind: kind,
+            len: input.len(),
+        },
+    }
+}
+
 impl Lexer {
     pub fn new() -> Self {
         Lexer {}
@@ -391,24 +406,20 @@ impl Lexer {
                     match matches.min_by_key(|&(i, start_idx, _)| (start_idx, i)) {
                         Some((min_i, min_start, end_idx)) => {
                             if min_start != current_idx {
-                                token_stream.push(Token {
-                                    kind: *skipped_token_kind,
-                                    len: min_start - current_idx,
-                                });
+                                token_stream.push(process_token(
+                                    *skipped_token_kind,
+                                    &input[current_idx..min_start],
+                                ));
                             }
                             let (_, token_kind, action) = rules[min_i];
-                            token_stream.push(Token {
-                                kind: token_kind,
-                                len: end_idx - min_start,
-                            });
+                            token_stream
+                                .push(process_token(token_kind, &input[min_start..end_idx]));
 
                             (end_idx, action)
                         }
                         None => {
-                            token_stream.push(Token {
-                                kind: *skipped_token_kind,
-                                len: input.len() - current_idx,
-                            });
+                            token_stream
+                                .push(process_token(*skipped_token_kind, &input[current_idx..]));
                             (input.len(), None)
                         }
                     }
@@ -420,10 +431,8 @@ impl Lexer {
                     {
                         Some((min_i, _, end_idx)) => {
                             let (_, token_kind, action) = rules[min_i];
-                            token_stream.push(Token {
-                                kind: token_kind,
-                                len: end_idx - current_idx,
-                            });
+                            token_stream
+                                .push(process_token(token_kind, &input[current_idx..end_idx]));
                             (end_idx, action)
                         }
                         None => {
@@ -450,96 +459,65 @@ impl Lexer {
 
 #[cfg(test)]
 mod tests {
+    use super::TokenKind::*;
     use super::*;
+
+    fn re_bounds(regex: &Regex, input: &str, from: usize) -> Option<(usize, usize)> {
+        regex
+            .find_from_pos(input, from)
+            .unwrap()
+            .map(|m| (m.start(), m.end()))
+    }
 
     #[test]
     fn test_float_regex() {
-        assert_eq!(FLOAT_RE.is_match(".1").unwrap(), false);
-        assert_eq!(FLOAT_RE.is_match("0.2").unwrap(), true);
-        assert_eq!(FLOAT_RE.is_match("3_4.5_6").unwrap(), true);
-        assert_eq!(FLOAT_RE.is_match("30_4.50_6e-7_80_9").unwrap(), true);
-        assert_eq!(FLOAT_RE.is_match("0__0.2").unwrap(), false);
+        // regular floats
+        assert_eq!(re_bounds(&FLOAT_RE, "1.2", 0), Some((0, 3)));
+        assert_eq!(re_bounds(&FLOAT_RE, "3_4.5_6", 0), Some((0, 7)));
+        assert_eq!(re_bounds(&FLOAT_RE, "30_4.50_6e-7_80_9", 0), Some((0, 17)));
 
-        assert_eq!(FLOAT_RE.find(".2.9").unwrap().map(|m| m.end()), None);
-        assert_eq!(FLOAT_RE.find(" 0.2").unwrap().map(|m| m.end()), None);
-        assert_eq!(FLOAT_RE.find("0.2 test").unwrap().map(|m| m.end()), Some(3));
-    }
+        // need leading zero
+        assert_eq!(re_bounds(&FLOAT_RE, ".1", 0), None);
+        assert_eq!(re_bounds(&FLOAT_RE, "0.1", 0), Some((0, 3)));
 
-    #[test]
-    fn test_int_regex() {
-        assert_eq!(INTEGER_RE.is_match("1").unwrap(), true);
-        assert_eq!(INTEGER_RE.is_match("0b0_1").unwrap(), true);
-        assert_eq!(INTEGER_RE.is_match("0o01234_567").unwrap(), true);
-        assert_eq!(INTEGER_RE.is_match("0o8").unwrap(), true);
-        assert_eq!(INTEGER_RE.is_match("0xdeadbeef888").unwrap(), true);
-        assert_eq!(INTEGER_RE.is_match("0_00").unwrap(), true);
+        // tuple ("foo.0.0") evaluation skip
+        assert_eq!(re_bounds(&FLOAT_RE, ".0.2", 0), None);
+        assert_eq!(re_bounds(&FLOAT_RE, ".0.2", 1), None);
 
-        assert_eq!(INTEGER_RE.find("02").unwrap().map(|m| m.end()), Some(1));
-        assert_eq!(INTEGER_RE.find("0_1").unwrap().map(|m| m.end()), Some(1));
-        assert_eq!(INTEGER_RE.find("0_02").unwrap().map(|m| m.end()), Some(3));
-        assert_eq!(INTEGER_RE.find("0_00").unwrap().map(|m| m.end()), Some(4));
-        assert_eq!(
-            INTEGER_RE.find("23_0__0").unwrap().map(|m| m.end()),
-            Some(4)
-        );
-    }
-
-    #[test]
-    fn test_variable_regex() {
-        assert_eq!(VARIABLE_START_RE.is_match("{{").unwrap(), true);
-        assert_eq!(VARIABLE_END_RE.is_match("}}").unwrap(), true);
+        // weird padding cases
+        assert_eq!(re_bounds(&FLOAT_RE, " 0.2", 1), Some((1, 4)));
+        assert_eq!(re_bounds(&FLOAT_RE, "0_0.2", 0), Some((0, 5)));
+        assert_eq!(re_bounds(&FLOAT_RE, "0__0.2", 0), Some((3, 6)));
+        assert_eq!(re_bounds(&FLOAT_RE, "0.2 test", 0), Some((0, 3)));
     }
 
     #[test]
     fn test_raw_start_regex_search() {
+        assert_eq!(re_bounds(&RAW_START_RE, "{% raw %}", 0), Some((0, 9)));
+        assert_eq!(re_bounds(&RAW_START_RE, "{%- raw %}", 0), Some((0, 10)));
+        assert_eq!(re_bounds(&RAW_START_RE, "{%+ raw %}", 0), Some((0, 10)));
+        assert_eq!(re_bounds(&RAW_START_RE, "{% raw -%}", 0), Some((0, 10)));
+        assert_eq!(re_bounds(&RAW_START_RE, "{% raw +%}", 0), None);
         assert_eq!(
-            RAW_START_RE.find("{% raw %}").unwrap().map(|m| m.start()),
-            Some(0)
+            re_bounds(&RAW_START_RE, "{% \n raw \n %}", 0),
+            Some((0, 13))
         );
         assert_eq!(
-            RAW_START_RE
-                .find("blank {% raw %}")
-                .unwrap()
-                .map(|m| m.start()),
-            Some(6)
+            re_bounds(&RAW_START_RE, "blank {% raw %}", 0),
+            Some((6, 15))
         );
-        assert_eq!(RAW_START_RE.is_match("{%- raw %}").unwrap(), true);
-        assert_eq!(RAW_START_RE.is_match("{%+ raw %}").unwrap(), true);
-        assert_eq!(RAW_START_RE.is_match("{% raw -%}").unwrap(), true);
-        assert_eq!(RAW_START_RE.is_match("{% raw +%}").unwrap(), false);
-        assert_eq!(RAW_START_RE.is_match("{% \n raw %}").unwrap(), true);
-        assert_eq!(RAW_START_RE.is_match("{% raw \n %}").unwrap(), true);
-        assert_eq!(RAW_START_RE.is_match("{%- raw -%}").unwrap(), true);
-        assert_eq!(RAW_START_RE.is_match("{%+ raw -%}").unwrap(), true);
-        assert_eq!(RAW_START_RE.is_match("{%+ raw +%}").unwrap(), false);
-        assert_eq!(RAW_START_RE.is_match("{%+ raw +%}").unwrap(), false);
     }
 
     #[test]
     fn test_raw_end_regex() {
         assert_eq!(
-            RAW_END_RE.find("{% endraw %}").unwrap().map(|m| m.start()),
-            Some(0)
+            re_bounds(&RAW_END_RE, "{% \n endraw \n %}", 0),
+            Some((0, 16))
         );
         assert_eq!(
-            RAW_END_RE
-                .find("blank {% endraw %}")
-                .unwrap()
-                .map(|m| m.start()),
-            Some(6)
+            re_bounds(&RAW_END_RE, "blank {%+ endraw -%}", 0),
+            Some((6, 20))
         );
-        assert_eq!(RAW_END_RE.is_match("{% endraw %}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{%- endraw %}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{%+ endraw %}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{% endraw -%}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{% endraw +%}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{% \n endraw %}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{% endraw \n %}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{% \n endraw \n %}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{%- endraw -%}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{%+ endraw -%}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{%+ endraw +%}").unwrap(), true);
-        assert_eq!(RAW_END_RE.is_match("{%+ endraw +%}").unwrap(), true);
     }
 
     #[test]
@@ -560,29 +538,99 @@ mod tests {
         println!("[{}\n]", to_print);
     }
 
+    struct TokenizeTestCase {
+        input: &'static str,
+        tokens: Vec<TokenKind>,
+    }
+
+    fn filter_important_tokens(tokens: Vec<Token>) -> Vec<TokenKind> {
+        tokens
+            .into_iter()
+            .filter_map(|t| match t.kind {
+                Whitespace => None,
+                _ => Some(t.kind),
+            })
+            .collect()
+    }
+
     #[test]
     fn test_tokenize() {
         let lexer = Lexer::new();
-        let inputs = [
-            "{%+\n set something = 1 * 2 %}\n{{ something }}",
-            "{% raw %}\n{{ something }} {% endraw %}",
-            "{% raw %}\n{{ something }}",
-            "{% ( %} {% ) %}",
-            "{% { %} {% } %}",
-            "{% {{ test }}",
-            "{% set x = {{ test }}",
-            "{{ test {% x",
-            "{{ foo.0.0 }}",
-            r#"{{ config(
-                    materialized="table",
-                    meta={
-                        "something": "another", 
-                    }
-                ) }}"#,
+        let test_cases = [
+            TokenizeTestCase {
+                input: "{%+\n set something = 1 * 2 %}\n{{ something }}",
+                tokens: Vec::from([
+                    BlockBegin,
+                    Name,
+                    Name,
+                    Assign,
+                    Integer,
+                    Mul,
+                    Integer,
+                    BlockEnd,
+                    Data,
+                    VariableBegin,
+                    Name,
+                    VariableEnd,
+                ]),
+            },
+            TokenizeTestCase {
+                input: "{% raw %}\n{{ something }}",
+                tokens: Vec::from([RawBegin, Data]),
+            },
+            TokenizeTestCase {
+                input: "{% raw %}\n{{ something }} {% endraw %}",
+                tokens: Vec::from([RawBegin, Data, RawEnd]),
+            },
+            TokenizeTestCase {
+                input: "{% ( %} {% ) %}",
+                tokens: Vec::from([
+                    BlockBegin, LParen, BlockEnd, Data, BlockBegin, RParen, BlockEnd,
+                ]),
+            },
+            TokenizeTestCase {
+                input: "{% { %} {% } %}",
+                tokens: Vec::from([
+                    BlockBegin, LBrace, BlockEnd, Data, BlockBegin, RBrace, BlockEnd,
+                ]),
+            },
+            TokenizeTestCase {
+                input: "{{ foo.0.0 ",
+                tokens: Vec::from([VariableBegin, Name, Dot, Integer, Dot, Integer]),
+            },
+            TokenizeTestCase {
+                input: r#"{{
+                    config(
+                        materialized="table",
+                        meta={
+                            "something": 1.0, 
+                        }
+                    ) 
+                }}"#,
+                tokens: Vec::from([
+                    VariableBegin,
+                    Name,
+                    LParen,
+                    Name,
+                    Assign,
+                    String,
+                    Comma,
+                    Name,
+                    Assign,
+                    LBrace,
+                    String,
+                    Colon,
+                    Float,
+                    Comma,
+                    RBrace,
+                    RParen,
+                    VariableEnd,
+                ]),
+            },
         ];
-        for input in inputs {
-            let tokens = lexer.tokenize(input);
-            print_tokenized(input, &tokens)
+        for test_case in test_cases {
+            let tokens = lexer.tokenize(test_case.input);
+            assert_eq!(filter_important_tokens(tokens), test_case.tokens);
         }
     }
 }
