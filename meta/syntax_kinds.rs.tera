@@ -1,0 +1,63 @@
+{%- set_global statement_names = [] -%}
+{%- for statement in statements -%}
+    {%- set statement_name = "stmt " ~ statement -%}
+    {%- set_global statement_names = statement_names | concat(with=statement_name) -%}
+{%- endfor -%}
+{%- set_global expression_names = [] -%}
+{%- for expression in expressions -%}
+    {%- set expression_name = "expr " ~ expression -%}
+    {%- set_global expression_names = expression_names | concat(with=expression_name) -%}
+{%- endfor -%}
+
+{%- set empty = [] -%}
+{%- set terminals = empty
+    | concat(with=comparisons | map(attribute="name"))
+    | concat(with=operators | map(attribute="name"))
+    | concat(with=tokens) 
+-%}
+{%- set nonterminals = empty
+    | concat(with=statement_names)
+    | concat(with=expression_names)
+    | concat(with=composites)
+-%}
+{%- set all_kinds = empty
+    | concat(with=terminals)
+    | concat(with=nonterminals)
+-%}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum SyntaxKind {
+    {%- for kind in all_kinds %}
+    {{ kind | camel_case }},
+    {%- endfor %}
+    ERROR,
+}
+
+impl From<TokenKind> for SyntaxKind {
+    fn from(token: TokenKind) -> SyntaxKind {
+        match token {
+            {%- for kind in terminals %}
+            TokenKind::{{ kind | camel_case }} => SyntaxKind::{{ kind | camel_case }},
+            {%- endfor %}
+            TokenKind::ERROR => SyntaxKind::ERROR,
+        }
+    }
+}
+
+impl From<SyntaxKind> for u16 {
+    fn from(kind: SyntaxKind) -> u16 {
+        kind as u16
+    }
+}
+
+impl From<u16> for SyntaxKind {
+    fn from(raw: u16) -> SyntaxKind {
+        match raw {
+            {%- for kind in all_kinds %}
+            {{ loop.index }} => SyntaxKind::{{ kind | camel_case }},
+            {%- endfor %}
+            _ => SyntaxKind::ERROR,
+        }
+    }
+}

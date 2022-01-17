@@ -1,60 +1,13 @@
-use fancy_regex::{escape, Match, Regex};
+use fancy_regex::{escape, Regex};
 use lazy_static::lazy_static;
 use std::collections::{HashMap, VecDeque};
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-#[repr(u16)]
-enum TokenKind {
-    Add,       // "+"
-    Assign,    // "="
-    Colon,     // ":"
-    Comma,     // ","
-    Div,       // "/"
-    Dot,       // "."
-    Eq,        // "=="
-    FloorDiv,  // "//"
-    Gt,        // ">"
-    GtEq,      // ">="
-    LBrace,    // "{"
-    LBracket,  // "["
-    LParen,    // "("
-    Lt,        // "<"
-    LtEq,      // "<="
-    Mod,       // "%"
-    Mul,       // "*"
-    Ne,        // "!="
-    Pipe,      // "|"
-    Pow,       // "**"
-    RBrace,    // "}"
-    RBracket,  // "]"
-    RParen,    // ")"
-    Semicolon, // ";"
-    Sub,       // "-"
-    Tilde,     // "~"
-
-    Whitespace,
-    Float,
-    Integer,
-    Name,
-    String,
-    Operator,
-    RawBegin,      // "{% raw %}" can include - or + (kind of)
-    RawEnd,        // "{% endraw %}" can include - or +
-    CommentBegin,  // "{#" can include - or +
-    CommentEnd,    // "#}" can include - or +
-    BlockBegin,    // "{%" can include - or +
-    BlockEnd,      // "%}" can include - or +
-    VariableBegin, // "{{" can include - or +
-    VariableEnd,   // "}}" can include -
-    Comment,
-    Data,
-    Error,
-}
+include!(concat!(env!("OUT_DIR"), "/token_kinds.rs"));
 
 #[derive(Debug)]
-struct Token {
-    kind: TokenKind,
-    len: usize,
+pub struct Token {
+    pub kind: TokenKind,
+    pub text: String,
 }
 
 lazy_static! {
@@ -98,34 +51,6 @@ lazy_static! {
     ).unwrap();
 
     // Operator-related
-    static ref OPERATORS: HashMap<&'static str, TokenKind> = HashMap::from([
-        ("+", TokenKind::Add),
-        ("-", TokenKind::Sub),
-        ("/", TokenKind::Div),
-        ("//", TokenKind::FloorDiv),
-        ("*", TokenKind::Mul),
-        ("%", TokenKind::Mod),
-        ("**", TokenKind::Pow),
-        ("~", TokenKind::Tilde),
-        ("[", TokenKind::LBracket),
-        ("]", TokenKind::RBracket),
-        ("(", TokenKind::LParen),
-        (")", TokenKind::RParen),
-        ("{", TokenKind::LBrace),
-        ("}", TokenKind::RBrace),
-        ("==", TokenKind::Eq),
-        ("!=", TokenKind::Ne),
-        (">", TokenKind::Gt),
-        (">=", TokenKind::GtEq),
-        ("<", TokenKind::Lt),
-        ("<=", TokenKind::LtEq),
-        ("=", TokenKind::Assign),
-        (".", TokenKind::Dot),
-        (":", TokenKind::Colon),
-        ("|", TokenKind::Pipe),
-        (",", TokenKind::Comma),
-        (";", TokenKind::Semicolon),
-    ]);
     static ref REVERSE_OPERATORS: HashMap<TokenKind, &'static str> = OPERATORS
         .iter()
         .map(|(&operator, &token)| (token, operator))
@@ -200,10 +125,10 @@ lazy_static! {
 
     static ref EXPRESSION_RULES: Vec<Rule> = Vec::from([
         (WHITESPACE_RE.clone(), TokenKind::Whitespace, None),
-        (FLOAT_RE.clone(), TokenKind::Float, None),
-        (INTEGER_RE.clone(), TokenKind::Integer, None),
+        (FLOAT_RE.clone(), TokenKind::FloatLiteral, None),
+        (INTEGER_RE.clone(), TokenKind::IntegerLiteral, None),
         (NAME_RE.clone(), TokenKind::Name, None),
-        (STRING_RE.clone(), TokenKind::String, None),
+        (STRING_RE.clone(), TokenKind::StringLiteral, None),
         (OPERATOR_RE.clone(), TokenKind::Operator, None),
     ]);
 
@@ -372,89 +297,81 @@ fn process_token(kind: TokenKind, input: &str) -> Token {
             kind: *OPERATORS
                 .get(input)
                 .expect(&format!("unable to find TokenKind for \"{}\"", input)),
-            len: input.len(),
+            text: input.into(),
         },
         _ => Token {
             kind: kind,
-            len: input.len(),
+            text: input.into(),
         },
     }
 }
 
-impl Lexer {
-    pub fn new() -> Self {
-        Lexer {}
-    }
+pub fn tokenize(input: &str) -> Vec<Token> {
+    let mut context_stack = VecDeque::from([Context::Root]);
+    let mut current_idx = 0;
+    let mut token_stream = Vec::new();
+    while current_idx != input.len() {
+        let current_context = context_stack
+            .back()
+            .expect("Lexer failed due to empty context");
+        let (match_type, rules) = RULES_BY_CONTEXT.get(current_context).unwrap();
+        let matches = rules.iter().enumerate().filter_map(|(i, (reg, _, _))| {
+            let reg_match = reg
+                .find_from_pos(input, current_idx)
+                .expect("regex find failed, likely because lookaheads are too complex")?;
+            Some((i, reg_match.start(), reg_match.end()))
+        });
+        let (next_idx, maybe_action) = match match_type {
+            MatchType::Search(skipped_token_kind) => {
+                match matches.min_by_key(|&(i, start_idx, _)| (start_idx, i)) {
+                    Some((min_i, min_start, end_idx)) => {
+                        if min_start != current_idx {
+                            token_stream.push(process_token(
+                                *skipped_token_kind,
+                                &input[current_idx..min_start],
+                            ));
+                        }
+                        let (_, token_kind, action) = rules[min_i];
+                        token_stream.push(process_token(token_kind, &input[min_start..end_idx]));
 
-    pub fn tokenize<'a>(&self, input: &'a str) -> Vec<Token> {
-        let mut context_stack = VecDeque::from([Context::Root]);
-        let mut current_idx = 0;
-        let mut token_stream = Vec::new();
-        while current_idx != input.len() {
-            let current_context = context_stack
-                .back()
-                .expect("Lexer failed due to empty context");
-            let (match_type, rules) = RULES_BY_CONTEXT.get(current_context).unwrap();
-            let matches = rules.iter().enumerate().filter_map(|(i, (reg, _, _))| {
-                let reg_match = reg
-                    .find_from_pos(input, current_idx)
-                    .expect("regex find failed, likely because lookaheads are too complex")?;
-                Some((i, reg_match.start(), reg_match.end()))
-            });
-            let (next_idx, maybe_action) = match match_type {
-                MatchType::Search(skipped_token_kind) => {
-                    match matches.min_by_key(|&(i, start_idx, _)| (start_idx, i)) {
-                        Some((min_i, min_start, end_idx)) => {
-                            if min_start != current_idx {
-                                token_stream.push(process_token(
-                                    *skipped_token_kind,
-                                    &input[current_idx..min_start],
-                                ));
-                            }
-                            let (_, token_kind, action) = rules[min_i];
-                            token_stream
-                                .push(process_token(token_kind, &input[min_start..end_idx]));
-
-                            (end_idx, action)
-                        }
-                        None => {
-                            token_stream
-                                .push(process_token(*skipped_token_kind, &input[current_idx..]));
-                            (input.len(), None)
-                        }
+                        (end_idx, action)
                     }
-                }
-                MatchType::MatchFromStart => {
-                    match matches
-                        .filter(|&(_, start_idx, _)| start_idx == current_idx)
-                        .max_by_key(|&(i, _, end_idx)| (end_idx, -(i as i64)))
-                    {
-                        Some((min_i, _, end_idx)) => {
-                            let (_, token_kind, action) = rules[min_i];
-                            token_stream
-                                .push(process_token(token_kind, &input[current_idx..end_idx]));
-                            (end_idx, action)
-                        }
-                        None => {
-                            // couldn't find anything hmm
-                            unreachable!("UNKNOWN_RE should have caught the error")
-                        }
-                    }
-                }
-            };
-            // update state
-            if let Some(action) = maybe_action {
-                match action {
-                    Action::AddContext(ctx) => context_stack.push_back(ctx),
-                    Action::PopContext => {
-                        context_stack.pop_back();
+                    None => {
+                        token_stream
+                            .push(process_token(*skipped_token_kind, &input[current_idx..]));
+                        (input.len(), None)
                     }
                 }
             }
-            current_idx = next_idx;
+            MatchType::MatchFromStart => {
+                match matches
+                    .filter(|&(_, start_idx, _)| start_idx == current_idx)
+                    .max_by_key(|&(i, _, end_idx)| (end_idx, -(i as i64)))
+                {
+                    Some((min_i, _, end_idx)) => {
+                        let (_, token_kind, action) = rules[min_i];
+                        token_stream.push(process_token(token_kind, &input[current_idx..end_idx]));
+                        (end_idx, action)
+                    }
+                    None => {
+                        // couldn't find anything hmm
+                        unreachable!("UNKNOWN_RE should have caught the error")
+                    }
+                }
+            }
+        };
+        // update state
+        if let Some(action) = maybe_action {
+            match action {
+                Action::AddContext(ctx) => context_stack.push_back(ctx),
+                Action::PopContext => {
+                    context_stack.pop_back();
+                }
+            }
         }
-        token_stream
+        current_idx = next_idx;
     }
+    token_stream
 }
 
 #[cfg(test)]
@@ -529,13 +446,15 @@ mod tests {
         })
     }
 
-    fn print_tokenized(input: &str, tokens: &Vec<Token>) {
-        let (_, to_print) = tokens.iter().fold((0, "".to_owned()), |(idx, s), token| {
-            let next_idx = idx + token.len;
-            let s = format!("{}\n({:?}\t {:?})", s, &input[idx..next_idx], token.kind);
-            (next_idx, s)
-        });
-        println!("[{}\n]", to_print);
+    // Prints a list of tokens and their corresponding TokenKinds
+    // Useful for debugging tests, probably
+    #[allow(dead_code)]
+    fn print_tokenized(tokens: &Vec<Token>) {
+        println!("[");
+        for token in tokens {
+            println!("{:?} \t {:?}", token.text, token.kind);
+        }
+        println!("]");
     }
 
     struct TokenizeTestCase {
@@ -555,7 +474,6 @@ mod tests {
 
     #[test]
     fn test_tokenize() {
-        let lexer = Lexer::new();
         let test_cases = [
             TokenizeTestCase {
                 input: "{%+\n set something = 1 * 2 %}\n{{ something }}",
@@ -564,9 +482,9 @@ mod tests {
                     Name,
                     Name,
                     Assign,
-                    Integer,
-                    Mul,
-                    Integer,
+                    IntegerLiteral,
+                    Multiply,
+                    IntegerLiteral,
                     BlockEnd,
                     Data,
                     VariableBegin,
@@ -585,18 +503,25 @@ mod tests {
             TokenizeTestCase {
                 input: "{% ( %} {% ) %}",
                 tokens: Vec::from([
-                    BlockBegin, LParen, BlockEnd, Data, BlockBegin, RParen, BlockEnd,
+                    BlockBegin, LeftParen, BlockEnd, Data, BlockBegin, RightParen, BlockEnd,
                 ]),
             },
             TokenizeTestCase {
                 input: "{% { %} {% } %}",
                 tokens: Vec::from([
-                    BlockBegin, LBrace, BlockEnd, Data, BlockBegin, RBrace, BlockEnd,
+                    BlockBegin, LeftBrace, BlockEnd, Data, BlockBegin, RightBrace, BlockEnd,
                 ]),
             },
             TokenizeTestCase {
                 input: "{{ foo.0.0 ",
-                tokens: Vec::from([VariableBegin, Name, Dot, Integer, Dot, Integer]),
+                tokens: Vec::from([
+                    VariableBegin,
+                    Name,
+                    Dot,
+                    IntegerLiteral,
+                    Dot,
+                    IntegerLiteral,
+                ]),
             },
             TokenizeTestCase {
                 input: r#"{{
@@ -610,26 +535,34 @@ mod tests {
                 tokens: Vec::from([
                     VariableBegin,
                     Name,
-                    LParen,
+                    LeftParen,
                     Name,
                     Assign,
-                    String,
+                    StringLiteral,
                     Comma,
                     Name,
                     Assign,
-                    LBrace,
-                    String,
+                    LeftBrace,
+                    StringLiteral,
                     Colon,
-                    Float,
+                    FloatLiteral,
                     Comma,
-                    RBrace,
-                    RParen,
+                    RightBrace,
+                    RightParen,
                     VariableEnd,
                 ]),
             },
         ];
         for test_case in test_cases {
-            let tokens = lexer.tokenize(test_case.input);
+            let tokens = tokenize(test_case.input);
+            assert_eq!(
+                tokens
+                    .iter()
+                    .map(|tok| tok.text.clone())
+                    .collect::<Vec<_>>()
+                    .join(""),
+                test_case.input
+            );
             assert_eq!(filter_important_tokens(tokens), test_case.tokens);
         }
     }

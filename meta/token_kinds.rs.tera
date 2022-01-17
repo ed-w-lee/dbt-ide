@@ -1,0 +1,44 @@
+{%- set empty = [] -%}
+{%- set all_kinds = empty
+    | concat(with=comparisons | map(attribute="name"))
+    | concat(with=operators | map(attribute="name"))
+    | concat(with=tokens) 
+-%}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum TokenKind {
+    {%- for kind in all_kinds %}
+    {{ kind | camel_case }},
+    {%- endfor %}
+    ERROR,
+}
+
+impl From<TokenKind> for u16 {
+    fn from(kind: TokenKind) -> u16 {
+        kind as u16
+    }
+}
+
+impl From<u16> for TokenKind {
+    fn from(raw: u16) -> TokenKind {
+        match raw {
+            {%- for kind in all_kinds %}
+            {{ loop.index }} => TokenKind::{{ kind | camel_case }},
+            {%- endfor %}
+            _ => TokenKind::ERROR,
+        }
+    }
+}
+
+// Operator-related
+lazy_static! {
+    static ref OPERATORS: HashMap<&'static str, TokenKind> = HashMap::from([
+        {%- for operator in operators %}
+        ("{{ operator.operator }}", TokenKind::{{ operator.name | camel_case }}),
+        {%- endfor %}
+        {%- for operator in comparisons %}
+        ("{{ operator.operator }}", TokenKind::{{ operator.name | camel_case }}),
+        {%- endfor %}
+    ]);
+}

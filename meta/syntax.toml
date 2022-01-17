@@ -1,0 +1,140 @@
+comparisons = [
+    [ "==", "equal" ],
+    [ ">", "greater than" ],
+    [ ">=","greater than or equal" ],
+    [ "<", "less than" ],
+    [ "<=", "less than or equal" ],
+    [ "!=", "not equal" ],
+]
+
+operators = [
+    [ "+", "add" ],
+    [ "=", "assign" ],
+    [ ":", "colon" ],
+    [ ",", "comma" ],
+    [ "/", "div" ],
+    [ ".", "dot" ],
+    [ "//", "floor div" ],
+    [ "{", "left brace" ],
+    [ "[", "left bracket" ],
+    [ "(", "left paren" ],
+    [ "%", "modulo" ],
+    [ "*", "multiply" ],
+    [ "|", "pipe" ],
+    [ "**", "power" ],
+    [ "}", "right brace" ],
+    [ "]", "right bracket" ],
+    [ ")", "right paren" ],
+    [ ";", "semi colon" ],
+    [ "-", "subtract" ],
+    [ "~", "tilde" ],
+]
+
+tokens = [
+    "operator",
+    "whitespace",
+    "float literal",
+    "integer literal",
+    "string literal",
+    "name",
+    "raw begin",
+    "raw end",
+    "comment begin",
+    "comment end",
+    "block begin",
+    "block end",
+    "variable begin",
+    "variable end",
+    "comment",
+    "data",
+    "error",
+]
+
+statements = [
+    # Multiple expressions, for `print` statements and template data
+    "output",
+    # not really used in dbt?
+    "extends",
+    # for-loop
+    "for",
+    # if (+ elif / else)
+    "if",
+    # macro declaration
+    "macro",
+    # allows reverse-direction macros, or something. used in call(statement)
+    "call block",
+    # filters a block
+    "filter block",
+    # allows scoped variables
+    "with",
+    # feels like parameters... or something
+    "block",
+    # include tag (for including rendered contents from another)
+    # not really used in dbt?
+    "include",
+    # import tag (for importing macros and stuff)
+    # not really used in dbt?
+    "import",
+    # from iport tag (for importing specific macros and stuff)
+    # not really used in dbt?
+    "from import",
+    # evaluates an expression and discards result
+    "do",
+    # assign expression to target
+    "assign",
+    # assigns a multi-line block to a target
+    "assign block",
+]
+
+expressions = [
+    "name",
+    "namespace ref",
+    # not sure if this'll be sufficient. we don't have access to python's type()
+    # built-in to identify types of things.
+    "constant",
+    "data",
+    "tuple",
+    "list",
+    "dict",
+    "ternary",
+    # transform expression
+    "filter",
+    # transform expression for a test
+    "test",
+    # call an expression
+    "call",
+    # retrieve attribute / item from expression (prefer item)
+    "get item",
+    # retrieve attribute / item from string (prefer attribute)
+    "get attr",
+    # slice object [start:stop:step]
+    "slice",
+    # concatenate stringified expressions
+    "concat",
+    # compare expression with other operands
+    "compare",
+    # operators
+    "multiply",
+    "divide",
+    "floor divide",
+    "add",
+    "subtract",
+    "modulo",
+    "power",
+    "and",
+    "or",
+    "not",
+    "negative",
+    "positive",
+]
+
+composites = [
+    # root of the parse tree
+    "template",
+    # a "k: v" pair in dicts
+    "pair",
+    # a "k=v" pair in kwargs
+    "keyword",
+    # operation on some expression
+    "operand",
+]
