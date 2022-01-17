@@ -45,9 +45,8 @@ tokens = [
     "block end",
     "variable begin",
     "variable end",
-    "comment",
+    "comment data",
     "data",
-    "error",
 ]
 
 statements = [
@@ -61,6 +60,8 @@ statements = [
     "if",
     # macro declaration
     "macro",
+    # raw statement
+    "raw",
     # allows reverse-direction macros, or something. used in call(statement)
     "call block",
     # filters a block
@@ -131,6 +132,10 @@ expressions = [
 composites = [
     # root of the parse tree
     "template",
+    # variable "{{ expression }}"
+    "variable",
+    # comment "{# expression #}"
+    "comment",
     # a "k: v" pair in dicts
     "pair",
     # a "k=v" pair in kwargs

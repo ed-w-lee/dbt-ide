@@ -176,7 +176,7 @@ lazy_static! {
             (
                 Context::Comment,
                 (
-                    MatchType::Search(TokenKind::Comment),
+                    MatchType::Search(TokenKind::CommentData),
                     Vec::from([(
                         COMMENT_END_RE.clone(),
                         TokenKind::CommentEnd,
@@ -264,7 +264,22 @@ enum MatchType {
     MatchFromStart,
 }
 
-/// Jinja2 lexer specifically for dbt
+fn process_token(kind: TokenKind, input: &str) -> Token {
+    match kind {
+        TokenKind::Operator => Token {
+            kind: *OPERATORS
+                .get(input)
+                .expect(&format!("unable to find TokenKind for \"{}\"", input)),
+            text: input.into(),
+        },
+        _ => Token {
+            kind: kind,
+            text: input.into(),
+        },
+    }
+}
+
+/// Jinja2 tokenizer specifically for dbt
 ///
 /// Built referencing
 /// [Jinja's lexer](https://github.com/pallets/jinja/blob/11065b55a0056905a8973efec12a15dc658ef46f/src/jinja2/lexer.py).
@@ -288,24 +303,6 @@ enum MatchType {
 /// The original lexer some ambiguity these by maintaining
 /// [a stack of open and close braces](https://github.com/pallets/jinja/blob/11065b55a0056905a8973efec12a15dc658ef46f/src/jinja2/lexer.py#L713),
 /// but that's to support custom delimiters.
-#[derive(Debug)]
-struct Lexer {}
-
-fn process_token(kind: TokenKind, input: &str) -> Token {
-    match kind {
-        TokenKind::Operator => Token {
-            kind: *OPERATORS
-                .get(input)
-                .expect(&format!("unable to find TokenKind for \"{}\"", input)),
-            text: input.into(),
-        },
-        _ => Token {
-            kind: kind,
-            text: input.into(),
-        },
-    }
-}
-
 pub fn tokenize(input: &str) -> Vec<Token> {
     let mut context_stack = VecDeque::from([Context::Root]);
     let mut current_idx = 0;

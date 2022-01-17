@@ -31,7 +31,7 @@ pub enum SyntaxKind {
     {%- for kind in all_kinds %}
     {{ kind | camel_case }},
     {%- endfor %}
-    ERROR,
+    Error,
 }
 
 impl From<TokenKind> for SyntaxKind {
@@ -40,7 +40,7 @@ impl From<TokenKind> for SyntaxKind {
             {%- for kind in terminals %}
             TokenKind::{{ kind | camel_case }} => SyntaxKind::{{ kind | camel_case }},
             {%- endfor %}
-            TokenKind::ERROR => SyntaxKind::ERROR,
+            TokenKind::Error => SyntaxKind::Error,
         }
     }
 }
@@ -57,7 +57,7 @@ impl From<u16> for SyntaxKind {
             {%- for kind in all_kinds %}
             {{ loop.index }} => SyntaxKind::{{ kind | camel_case }},
             {%- endfor %}
-            _ => SyntaxKind::ERROR,
+            _ => SyntaxKind::Error,
         }
     }
 }

@@ -11,7 +11,7 @@ pub enum TokenKind {
     {%- for kind in all_kinds %}
     {{ kind | camel_case }},
     {%- endfor %}
-    ERROR,
+    Error,
 }
 
 impl From<TokenKind> for u16 {
@@ -26,7 +26,7 @@ impl From<u16> for TokenKind {
             {%- for kind in all_kinds %}
             {{ loop.index }} => TokenKind::{{ kind | camel_case }},
             {%- endfor %}
-            _ => TokenKind::ERROR,
+            _ => TokenKind::Error,
         }
     }
 }
