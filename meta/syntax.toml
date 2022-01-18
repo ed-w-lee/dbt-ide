@@ -129,6 +129,17 @@ expressions = [
     "positive",
 ]
 
+nameops = [
+    "or",
+    "and",
+    "not",
+    "if",
+    "elif",
+    "else",
+    "in",
+    "is",
+]
+
 composites = [
     # root of the parse tree
     "template",
@@ -142,4 +153,14 @@ composites = [
     "keyword",
     # operation on some expression
     "operand",
+    # element in tuple
+    "tuple element",
+    # "," separating elements in tuple
+    "tuple separator",
+    # if condition is true for ternary, use first
+    "ternary first",
+    # if condition is false for ternary, use second
+    "ternary second",
+    # condition to check for ternary
+    "ternary condition",
 ]

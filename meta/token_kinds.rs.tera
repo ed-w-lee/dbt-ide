@@ -24,7 +24,7 @@ impl From<u16> for TokenKind {
     fn from(raw: u16) -> TokenKind {
         match raw {
             {%- for kind in all_kinds %}
-            {{ loop.index }} => TokenKind::{{ kind | camel_case }},
+            {{ loop.index - 1 }} => TokenKind::{{ kind | camel_case }},
             {%- endfor %}
             _ => TokenKind::Error,
         }

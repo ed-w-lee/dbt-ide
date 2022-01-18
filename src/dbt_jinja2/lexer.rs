@@ -10,6 +10,12 @@ pub struct Token {
     pub text: String,
 }
 
+impl Token {
+    pub fn is_name(&self, name: &str) -> bool {
+        self.kind == TokenKind::Name && self.text == name
+    }
+}
+
 lazy_static! {
     // Regexes copied from Jinja's lexer logic
     static ref WHITESPACE_RE: Regex = Regex::new(r"\s+").unwrap();
@@ -343,7 +349,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
             MatchType::MatchFromStart => {
                 match matches
                     .filter(|&(_, start_idx, _)| start_idx == current_idx)
-                    .max_by_key(|&(i, _, end_idx)| (end_idx, -(i as i64)))
+                    .max_by_key(|&(i, _, _)| -(i as i64))
                 {
                     Some((min_i, _, end_idx)) => {
                         let (_, token_kind, action) = rules[min_i];
@@ -501,6 +507,22 @@ mod tests {
                 input: "{% ( %} {% ) %}",
                 tokens: Vec::from([
                     BlockBegin, LeftParen, BlockEnd, Data, BlockBegin, RightParen, BlockEnd,
+                ]),
+            },
+            TokenizeTestCase {
+                input: "{{ 000if 111if 222if else else 333}}",
+                tokens: Vec::from([
+                    VariableBegin,
+                    IntegerLiteral,
+                    Name,
+                    IntegerLiteral,
+                    Name,
+                    IntegerLiteral,
+                    Name,
+                    Name,
+                    Name,
+                    IntegerLiteral,
+                    VariableEnd,
                 ]),
             },
             TokenizeTestCase {

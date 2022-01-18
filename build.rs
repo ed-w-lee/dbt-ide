@@ -57,6 +57,7 @@ struct SyntaxConfig {
     statements: Vec<String>,
     expressions: Vec<String>,
     composites: Vec<String>,
+    nameops: Vec<String>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {

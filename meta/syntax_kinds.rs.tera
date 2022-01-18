@@ -8,6 +8,11 @@
     {%- set expression_name = "expr " ~ expression -%}
     {%- set_global expression_names = expression_names | concat(with=expression_name) -%}
 {%- endfor -%}
+{%- set_global nameop_names = [] -%}
+{%- for nameop in nameops -%}
+    {%- set nameop_name = "name operator " ~ nameop -%}
+    {%- set_global nameop_names = nameop_names | concat(with=nameop_name) -%}
+{%- endfor -%}
 
 {%- set empty = [] -%}
 {%- set terminals = empty
@@ -19,6 +24,7 @@
     | concat(with=statement_names)
     | concat(with=expression_names)
     | concat(with=composites)
+    | concat(with=nameop_names)
 -%}
 {%- set all_kinds = empty
     | concat(with=terminals)
@@ -55,7 +61,7 @@ impl From<u16> for SyntaxKind {
     fn from(raw: u16) -> SyntaxKind {
         match raw {
             {%- for kind in all_kinds %}
-            {{ loop.index }} => SyntaxKind::{{ kind | camel_case }},
+            {{ loop.index - 1 }} => SyntaxKind::{{ kind | camel_case }},
             {%- endfor %}
             _ => SyntaxKind::Error,
         }
