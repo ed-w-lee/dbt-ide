@@ -74,6 +74,12 @@ impl Parser {
         }
     }
 
+    // TODO: Consider re-writing recursive-descent as Pratt parser?
+    // I'm currently copying Jinja's logic to avoid thinking about binding power
+    // but it may be worth trying to write a Pratt parser for clarity.
+    // The main risks are actually understanding Pratt parsing and figuring
+    // out the binding powers for all the operators...
+
     fn parse_compare(&mut self) {
         // TODO: placeholder
         self.skip_ws();
