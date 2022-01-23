@@ -1,6 +1,6 @@
-use std::{collections::VecDeque, hash::BuildHasher};
+use std::{collections::VecDeque, hash::BuildHasher, ops::RangeBounds};
 
-use super::lexer::{Token, TokenKind};
+use super::lexer::{Token, TokenKind, COMPARE_OPERATORS};
 use defer_lite::defer;
 use rowan::{Checkpoint, GreenNode, GreenNodeBuilder};
 use SyntaxKind::*;
@@ -62,7 +62,7 @@ impl Parser {
                 }
                 Some(TokenKind::BlockBegin) => {}
                 Some(t) => {
-                    println!("{:?}", t);
+                    panic!("unexpected top-level token: {:?}", t);
                 }
             }
         }
@@ -80,10 +80,554 @@ impl Parser {
     // The main risks are actually understanding Pratt parsing and figuring
     // out the binding powers for all the operators...
 
-    fn parse_compare(&mut self) {
-        // TODO: placeholder
+    fn parse_list(&mut self) {
+        todo!()
+    }
+
+    fn parse_dict(&mut self) {
+        todo!()
+    }
+
+    fn parse_primary(&mut self) {
         self.skip_ws();
-        self.bump();
+        match self.current() {
+            Some(TokenKind::Name) => {
+                let current_tok = &self.current_tok().unwrap().text.as_str();
+                if ["true", "false", "True", "False"].contains(current_tok) {
+                    self.register(ExprConstantBool);
+                } else if ["none", "None"].contains(current_tok) {
+                    self.register(ExprConstantNone);
+                } else {
+                    self.register(ExprName);
+                }
+            }
+            Some(TokenKind::StringLiteral) => {
+                self.builder.start_node(ExprConstantString.into());
+                for _ in 0.. {
+                    self.skip_ws();
+                    match self.current() {
+                        Some(TokenKind::StringLiteral) => {
+                            self.bump();
+                        }
+                        _ => break,
+                    }
+                }
+                self.builder.finish_node()
+            }
+            Some(TokenKind::IntegerLiteral) => {
+                self.bump();
+            }
+            Some(TokenKind::FloatLiteral) => {
+                self.bump();
+            }
+            Some(TokenKind::LeftParen) => {
+                self.builder.start_node(ExprWrapped.into());
+                self.bump();
+                self.parse_tuple(TupleParseMode::WithCondExpr, &[], true);
+                if self.error_until(TokenKind::RightParen) {
+                    self.bump();
+                } else {
+                    self.errors
+                        .push("expected ')' before end of context".into());
+                }
+                self.builder.finish_node();
+            }
+            Some(TokenKind::LeftBracket) => {
+                self.parse_list();
+            }
+            Some(TokenKind::LeftBrace) => {
+                self.parse_dict();
+            }
+            _ => self.errors.push("invalid primary expression".into()),
+        }
+    }
+
+    fn parse_call_args(&mut self) {
+        todo!()
+    }
+
+    fn parse_call(&mut self, checkpoint: Checkpoint) {
+        self.builder.start_node_at(checkpoint, ExprCall.into());
+        self.parse_call_args();
+        self.builder.finish_node();
+    }
+
+    fn parse_subscribed(&mut self) {
+        let slice_checkpoint = self.builder.checkpoint();
+
+        self.skip_ws();
+        match self.current() {
+            Some(TokenKind::Colon) => {
+                self.builder
+                    .start_node_at(slice_checkpoint, ExprSlice.into());
+                self.bump();
+            }
+            _ => {
+                self.parse_expression(true);
+                self.skip_ws();
+                match self.current() {
+                    Some(kind) if kind == TokenKind::Colon => self
+                        .builder
+                        .start_node_at(slice_checkpoint, ExprSlice.into()),
+                    _ => return,
+                }
+            }
+        }
+
+        self.skip_ws();
+        match self.current() {
+            Some(t)
+                if t != TokenKind::RightBracket
+                    && t != TokenKind::Comma
+                    && t != TokenKind::Colon =>
+            {
+                self.parse_expression(true);
+            }
+            _ => (),
+        }
+
+        self.skip_ws();
+        match self.current() {
+            Some(TokenKind::Colon) => {
+                self.bump();
+                self.skip_ws();
+                match self.current() {
+                    Some(t) if t != TokenKind::RightBracket && t != TokenKind::Comma => {
+                        self.parse_expression(true);
+                    }
+                    _ => (),
+                }
+            }
+            _ => (),
+        }
+
+        self.builder.finish_node();
+    }
+
+    fn parse_postfix(&mut self, checkpoint: Checkpoint) {
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::Dot) => {
+                    self.bump();
+                    self.skip_ws();
+                    match self.current() {
+                        Some(TokenKind::Name) => {
+                            self.builder.start_node_at(checkpoint, ExprGetAttr.into());
+                            self.register(Subscript);
+                            self.builder.finish_node();
+                        }
+                        Some(TokenKind::IntegerLiteral) => {
+                            self.builder.start_node_at(checkpoint, ExprGetItem.into());
+                            self.register(Subscript);
+                            self.builder.finish_node();
+                        }
+                        kind => {
+                            self.errors.push(format!(
+                                "expected name or integer as subscript, not {:?}",
+                                kind
+                            ));
+                        }
+                    }
+                }
+                Some(TokenKind::LeftBracket) => {
+                    self.bump();
+                    self.skip_ws();
+
+                    self.builder.start_node(Subscript.into());
+                    let mut ended_correctly = false;
+
+                    let tuple_checkpoint = self.builder.checkpoint();
+                    let mut is_tuple = false;
+
+                    self.parse_subscribed();
+
+                    for _ in 0.. {
+                        self.skip_ws();
+                        match self.current() {
+                            Some(TokenKind::RightBracket) => {
+                                ended_correctly = true;
+                                break;
+                            }
+                            Some(kind) if Self::is_context_end(kind) => {
+                                self.errors.push(format!(
+                                    "expected ']' for subscript, but found end of context: {:?}",
+                                    kind
+                                ));
+                                break;
+                            }
+                            Some(TokenKind::Comma) => {
+                                self.bump();
+                                if !is_tuple {
+                                    self.builder
+                                        .start_node_at(tuple_checkpoint, ExprTuple.into());
+                                    is_tuple = true;
+                                }
+                                self.parse_subscribed();
+                            }
+                            kind => {
+                                self.bump_error();
+                                self.errors.push(format!(
+                                    "expected ',' for tuple or ']' for subscript, but found {:?}",
+                                    kind
+                                ));
+                            }
+                        }
+                    }
+
+                    if is_tuple {
+                        self.builder.finish_node();
+                    }
+                    // finish subscript node
+                    self.builder.finish_node();
+                    if ended_correctly {
+                        self.bump();
+                    }
+                    self.builder.start_node_at(checkpoint, ExprGetItem.into());
+                    self.builder.finish_node();
+                }
+                Some(TokenKind::LeftParen) => {
+                    self.parse_call(checkpoint);
+                }
+                _ => break,
+            }
+        }
+    }
+
+    // Honestly, not incredibly necessary because dbt jinja doesn't have any
+    // filters that have nested names...
+    fn parse_nested_name(&mut self) {
+        let checkpoint = self.builder.checkpoint();
+        let mut is_nested = false;
+
+        self.skip_ws();
+        match self.current() {
+            Some(TokenKind::Name) => self.bump(),
+            kind => {
+                self.errors.push(format!("expected name, not {:?}", kind));
+                return;
+            }
+        }
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::Dot) => {
+                    if !is_nested {
+                        self.builder
+                            .start_node_at(checkpoint, ExprNestedName.into());
+                        is_nested = true;
+                    }
+                    self.bump();
+                    self.skip_ws();
+                    match self.current() {
+                        Some(TokenKind::Name) => self.bump(),
+                        kind => {
+                            self.errors.push(format!("expected name, not {:?}", kind));
+                            break;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        if is_nested {
+            self.builder.finish_node();
+        }
+    }
+
+    fn parse_filter(&mut self, checkpoint: Option<Checkpoint>, mut start_inline: bool) {
+        let filter_checkpoint = match checkpoint {
+            Some(c) => c,
+            None => self.builder.checkpoint(),
+        };
+
+        while start_inline || self.current() == Some(TokenKind::Pipe) {
+            if !start_inline {
+                // must be a pipe, let's skip it
+                // TODO: figure out if we want pipe in the filter node in the AST
+                self.bump();
+            }
+            self.skip_ws();
+
+            self.parse_nested_name();
+
+            match self.current() {
+                Some(TokenKind::LeftParen) => {
+                    self.parse_call_args();
+                }
+                _ => (),
+            }
+
+            self.builder
+                .start_node_at(filter_checkpoint, ExprFilter.into());
+            self.builder.finish_node();
+            start_inline = false;
+        }
+    }
+
+    /// expects 'is' token that denotes test to have already been consumed
+    fn parse_test(&mut self, checkpoint: Checkpoint) {
+        self.skip_ws();
+        let negated = match self.current_tok() {
+            Some(t) if t.is_name("not") => {
+                self.builder.start_node_at(checkpoint, ExprNot.into());
+                self.bump();
+                self.builder.start_node(ExprTest.into());
+                true
+            }
+            _ => {
+                self.builder.start_node_at(checkpoint, ExprTest.into());
+                false
+            }
+        };
+
+        self.parse_nested_name();
+
+        match self.current() {
+            Some(TokenKind::LeftParen) => self.parse_call_args(),
+            Some(TokenKind::Name)
+            | Some(TokenKind::StringLiteral)
+            | Some(TokenKind::IntegerLiteral)
+            | Some(TokenKind::FloatLiteral)
+            | Some(TokenKind::LeftBracket)
+            | Some(TokenKind::LeftBrace) => {
+                let mut should_parse = true;
+                if self.current() == Some(TokenKind::Name) {
+                    let name = self.current_tok().unwrap().text.as_ref();
+                    should_parse = match name {
+                        "else" | "or" | "and" => false,
+                        "is" => {
+                            // Not sure why this is prohibited tbh. You can
+                            // circumvent it if your test has args sooo I guess
+                            // it's for clarity?
+                            self.errors
+                                .push("Chaining multiple tests is prohibited".into());
+                            false
+                        }
+                        _ => true,
+                    }
+                }
+                if should_parse {
+                    self.builder.start_node(Arguments.into());
+                    {
+                        let arg_checkpoint = self.builder.checkpoint();
+                        self.parse_primary();
+                        self.parse_postfix(arg_checkpoint);
+                    }
+                    self.builder.finish_node();
+                }
+            }
+            _ => (),
+        }
+
+        if negated {
+            self.builder.finish_node();
+        }
+        self.builder.finish_node();
+    }
+
+    fn parse_filter_expr(&mut self, checkpoint: Checkpoint) {
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current_tok() {
+                Some(t) if t.kind == TokenKind::Pipe => {
+                    self.parse_filter(Some(checkpoint), false);
+                }
+                Some(t) if t.is_name("is") => {
+                    self.bump();
+                    self.parse_test(checkpoint);
+                }
+                Some(t) if t.kind == TokenKind::LeftParen => {
+                    self.parse_call(checkpoint);
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn parse_unary(&mut self, with_filter: bool) {
+        let checkpoint = self.builder.checkpoint();
+
+        self.skip_ws();
+        match self.current() {
+            Some(TokenKind::Subtract) => {
+                self.builder.start_node_at(checkpoint, ExprNegative.into());
+                self.bump();
+                self.parse_unary(false);
+                self.builder.finish_node();
+            }
+            Some(TokenKind::Add) => {
+                self.builder.start_node_at(checkpoint, ExprPositive.into());
+                self.bump();
+                self.parse_unary(false);
+                self.builder.finish_node();
+            }
+            _ => self.parse_primary(),
+        }
+        self.parse_postfix(checkpoint);
+        if with_filter {
+            self.parse_filter_expr(checkpoint);
+        }
+    }
+
+    fn parse_pow(&mut self) {
+        let checkpoint = self.builder.checkpoint();
+        self.skip_ws();
+        self.parse_unary(true);
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::Power) => {
+                    self.builder.start_node_at(checkpoint, ExprPower.into());
+                    self.bump();
+                    self.parse_unary(true);
+                    self.builder.finish_node();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn parse_math2(&mut self) {
+        let checkpoint = self.builder.checkpoint();
+        self.skip_ws();
+        self.parse_pow();
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::Multiply) => {
+                    self.builder.start_node_at(checkpoint, ExprMultiply.into());
+                    self.bump();
+                    self.parse_pow();
+                    self.builder.finish_node();
+                }
+                Some(TokenKind::Div) => {
+                    self.builder.start_node_at(checkpoint, ExprDivide.into());
+                    self.bump();
+                    self.parse_pow();
+                    self.builder.finish_node();
+                }
+                Some(TokenKind::FloorDiv) => {
+                    self.builder
+                        .start_node_at(checkpoint, ExprFloorDivide.into());
+                    self.bump();
+                    self.parse_pow();
+                    self.builder.finish_node();
+                }
+                Some(TokenKind::Modulo) => {
+                    self.builder.start_node_at(checkpoint, ExprModulo.into());
+                    self.bump();
+                    self.parse_pow();
+                    self.builder.finish_node();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn parse_concat(&mut self) {
+        let checkpoint = self.builder.checkpoint();
+        let mut is_concat = false;
+
+        self.skip_ws();
+        self.parse_math2();
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::Tilde) => {
+                    if !is_concat {
+                        is_concat = true;
+                        self.builder.start_node_at(checkpoint, ExprConcat.into());
+                    }
+                    self.bump();
+                    self.parse_math2();
+                }
+                _ => break,
+            }
+        }
+        if is_concat {
+            self.builder.finish_node();
+        }
+    }
+
+    fn parse_math1(&mut self) {
+        let checkpoint = self.builder.checkpoint();
+        self.skip_ws();
+        self.parse_concat();
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::Add) => {
+                    self.builder.start_node_at(checkpoint, ExprAdd.into());
+                    self.bump();
+                    self.parse_concat();
+                    self.builder.finish_node();
+                }
+                Some(TokenKind::Subtract) => {
+                    self.builder.start_node_at(checkpoint, ExprSubtract.into());
+                    self.bump();
+                    self.parse_concat();
+                    self.builder.finish_node();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn parse_compare(&mut self) {
+        let checkpoint = self.builder.checkpoint();
+        let mut is_compare = false;
+
+        self.skip_ws();
+        self.parse_math1();
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current_tok() {
+                Some(t) if COMPARE_OPERATORS.contains(&t.kind) => {
+                    if !is_compare {
+                        is_compare = true;
+                        self.builder.start_node_at(checkpoint, ExprCompare.into());
+                    }
+                    self.builder.start_node(Operand.into());
+                    self.bump();
+                    self.skip_ws();
+                    self.parse_math1();
+                    self.builder.finish_node();
+                }
+                Some(t) if t.is_name("in") => {
+                    if !is_compare {
+                        is_compare = true;
+                        self.builder.start_node_at(checkpoint, ExprCompare.into());
+                    }
+                    self.builder.start_node(Operand.into());
+                    self.register(NameOperatorIn);
+                    self.skip_ws();
+                    self.parse_math1();
+                    self.builder.finish_node();
+                }
+                Some(t) if t.is_name("not") => match self.next_nonws_tok() {
+                    Some(t) if t.is_name("in") => {
+                        if !is_compare {
+                            is_compare = true;
+                            self.builder.start_node_at(checkpoint, ExprCompare.into());
+                        }
+                        self.builder.start_node(Operand.into());
+                        self.builder.start_node(NameOperatorNotIn.into());
+                        self.bump();
+                        self.skip_ws();
+                        self.bump();
+                        self.builder.finish_node();
+                        self.parse_math1();
+                        self.builder.finish_node();
+                    }
+                    _ => break,
+                },
+                _ => break,
+            }
+        }
+        if is_compare {
+            self.builder.finish_node();
+        }
     }
 
     fn parse_not(&mut self) {
@@ -135,10 +679,6 @@ impl Parser {
                 _ => return,
             }
         }
-    }
-
-    fn parse_primary(&mut self) {
-        todo!()
     }
 
     fn parse_ternary(&mut self) {
@@ -344,6 +884,32 @@ impl Parser {
         self.tokens.last()
     }
 
+    fn next_nonws_tok(&self) -> Option<&Token> {
+        let mut token_iter = self.tokens.iter().rev();
+        loop {
+            match token_iter.next() {
+                None => {
+                    return None;
+                }
+                Some(t) if t.kind == TokenKind::Whitespace => (),
+                Some(_) => {
+                    break;
+                }
+            }
+        }
+        loop {
+            match token_iter.next() {
+                None => {
+                    return None;
+                }
+                Some(t) if t.kind == TokenKind::Whitespace => (),
+                Some(t) => {
+                    return Some(t);
+                }
+            }
+        }
+    }
+
     fn bump(&mut self) {
         let token = self.tokens.pop().unwrap();
         self.builder
@@ -377,6 +943,9 @@ impl Parser {
                 }
                 Some(t) if t == token => {
                     return true;
+                }
+                Some(t) if Self::is_context_end(t) => {
+                    return false;
                 }
                 Some(_) => self.bump_error(),
             }
@@ -451,11 +1020,47 @@ mod tests {
             ParseTestCase {
                 input: "{{ 111 and 222 or not not not 333 }}",
             },
+            ParseTestCase {
+                input: "{{ 11 > 9 < 12 not in 13 }}",
+            },
+            ParseTestCase {
+                input: "{{ 1 + 2 + 3 }}",
+            },
+            ParseTestCase {
+                input: "{{ 1 ~ 'test' 'something' ~ blah }}",
+            },
+            ParseTestCase {
+                input: "{{ 1 * -2 / 3 + +3 // 5 ** -3 ** 4 }}",
+            },
+            ParseTestCase {
+                input: "{{ 1 * -2 / 3 + (+3 // 5 ** -3) ** 4 }}",
+            },
+            ParseTestCase {
+                input: "{{ foo . 0 .blah [0] [:(1,):3, 2] }}",
+            },
+            ParseTestCase {
+                input: "{{ foo | filter | filter2 | filt.er3 }}",
+            },
+            ParseTestCase {
+                input: "{{ foo | filter.3 }}",
+            },
+            ParseTestCase {
+                input: "{{ foo | filter.3 }}",
+            },
+            ParseTestCase {
+                input: "{{ foo is divisibleby 3 is something }}",
+            },
+            ParseTestCase {
+                input: "{{ - (1 * 2).0 is divisibleby 3 }}",
+            },
             // ParseTestCase {
             //     input: "{% set else = True %}{{ 000 if 111 if 222 if else else 333"
             // }
             // ParseTestCase {
             //     input: "{% for i in 1, 2, 3 %}{{i}}{% endfor %}",
+            // },
+            // ParseTestCase {
+            //     input: "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}"
             // },
         ];
         for test_case in test_cases {
@@ -466,7 +1071,4 @@ mod tests {
             println!("{:#?}", p.errors);
         }
     }
-
-    // degenerate cases
-    // '{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}'
 }

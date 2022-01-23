@@ -41,4 +41,10 @@ lazy_static! {
         ("{{ operator.operator }}", TokenKind::{{ operator.name | camel_case }}),
         {%- endfor %}
     ]);
+
+    pub static ref COMPARE_OPERATORS: Vec<TokenKind> = Vec::from([
+        {%- for operator in comparisons %}
+        TokenKind::{{ operator.name | camel_case }},
+        {%- endfor %}
+    ]);
 }

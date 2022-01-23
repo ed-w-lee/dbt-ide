@@ -21,7 +21,7 @@ lazy_static! {
     static ref WHITESPACE_RE: Regex = Regex::new(r"\s+").unwrap();
     static ref NEWLINE_RE: Regex = Regex::new(r"(\r\n|\r|\n)").unwrap();
     static ref STRING_RE: Regex =
-        Regex::new(r#"(?s)('([^'\\]*(?:\\.[^'\\]*)*)'" r'|"([^"\\]*(?:\\.[^"\\]*)*)")"#).unwrap();
+        Regex::new(r#"(?s)('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)")"#).unwrap();
     static ref INTEGER_RE: Regex = Regex::new(
         r#"(?ix)
         (
@@ -541,6 +541,10 @@ mod tests {
                     Dot,
                     IntegerLiteral,
                 ]),
+            },
+            TokenizeTestCase {
+                input: "{{ 'test' ~ something ",
+                tokens: Vec::from([VariableBegin, StringLiteral, Tilde, Name]),
             },
             TokenizeTestCase {
                 input: r#"{{

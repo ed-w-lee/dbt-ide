@@ -89,10 +89,13 @@ statements = [
 
 expressions = [
     "name",
+    "nested name",
     "namespace ref",
-    # not sure if this'll be sufficient. we don't have access to python's type()
-    # built-in to identify types of things.
-    "constant",
+    "constant bool",
+    "constant none",
+    "constant string",
+    # (expr)
+    "wrapped",
     "data",
     "tuple",
     "list",
@@ -138,6 +141,7 @@ nameops = [
     "else",
     "in",
     "is",
+    "not in",
 ]
 
 composites = [
@@ -163,4 +167,6 @@ composites = [
     "ternary second",
     # condition to check for ternary
     "ternary condition",
+    "subscript",
+    "arguments",
 ]
