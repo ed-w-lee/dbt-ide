@@ -68,7 +68,9 @@ impl Parser {
                 Some(TokenKind::VariableBegin) => {
                     self.parse_variable();
                 }
-                Some(TokenKind::BlockBegin) => {}
+                Some(TokenKind::BlockBegin) => {
+                    panic!("no work on block_begin yet");
+                }
                 Some(t) => {
                     panic!("unexpected top-level token: {:?}", t);
                 }
@@ -159,7 +161,7 @@ impl Parser {
                         .push("dict key requires \": value\" to complete".into());
                     break;
                 }
-                Some(kind) if Self::is_context_end(kind) => {
+                Some(kind) if Self::is_expression_end(kind) => {
                     self.builder.finish_node();
                     self.errors.push(format!(
                         "expected end of dict, but found end of context {:?}",
@@ -173,6 +175,7 @@ impl Parser {
                     self.bump_error();
                 }
                 None => {
+                    self.builder.finish_node();
                     self.errors.push("expected ':', but found EOF".into());
                     break;
                 }
@@ -319,7 +322,7 @@ impl Parser {
                     self.parse_expression(true);
                     self.builder.finish_node();
                 }
-                Some(kind) if Self::is_context_end(kind) => {
+                Some(kind) if Self::is_expression_end(kind) => {
                     self.errors.push(format!(
                         "incomplete call args before context end {:?}",
                         kind
@@ -1071,16 +1074,16 @@ impl Parser {
     }
 
     // Utilities for traversing through token stream
-    fn is_context_end(kind: TokenKind) -> bool {
+    fn is_expression_end(kind: TokenKind) -> bool {
         match kind {
-            TokenKind::VariableEnd | TokenKind::BlockEnd | TokenKind::RightParen => true,
+            TokenKind::VariableEnd | TokenKind::BlockEnd => true,
             _ => false,
         }
     }
 
     fn is_tuple_end(token: &Token, extra_end_rules: &[&'static str]) -> bool {
         match token.kind {
-            t if Self::is_context_end(t) => true,
+            t if Self::is_expression_end(t) || t == TokenKind::RightParen => true,
             TokenKind::Name => extra_end_rules.contains(&&*token.text),
             _ => false,
         }
@@ -1152,7 +1155,7 @@ impl Parser {
                 Some(t) if tokens.contains(&t) => {
                     return Some(t);
                 }
-                Some(kind) if Self::is_context_end(kind) => {
+                Some(kind) if Self::is_expression_end(kind) => {
                     return None;
                 }
                 Some(_) => self.bump_error(),
@@ -1161,13 +1164,13 @@ impl Parser {
     }
 }
 
-struct Parse {
+pub struct Parse {
     green_node: GreenNode,
     #[allow(unused)]
     errors: Vec<String>,
 }
 
-fn parse(tokens: Vec<Token>) -> Parse {
+pub fn parse(tokens: Vec<Token>) -> Parse {
     let mut tokens = tokens;
     tokens.reverse();
     Parser {
@@ -1181,7 +1184,7 @@ fn parse(tokens: Vec<Token>) -> Parse {
 #[cfg(test)]
 mod tests {
     use super::{parse, Lang, Parse};
-    use crate::dbt_jinja2::lexer::{tokenize, Token};
+    use crate::dbt_jinja2::lexer::tokenize;
 
     type SyntaxNode = rowan::SyntaxNode<Lang>;
 
@@ -1212,6 +1215,7 @@ mod tests {
 
     fn test_parse(test_case: ParseTestCase) {
         let tokens = tokenize(test_case.input);
+        println!("{:?}", tokens);
         let p = parse(tokens);
         let node = p.syntax();
         print_node(node, 0);
@@ -1297,6 +1301,12 @@ mod tests {
         test_call_extra_toks,
         "{{ call(arg1 a, **kwargs b, *args c, kwarg d=kw e, arg2 f, arg3 g) "
     );
+
+    // fuzz-generated tests
+
+    test_case!(test_variable_dict_dict, "{{{{");
+
+    test_case!(test_variable_dict_dict_paren, "{{{{)");
 
     // "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}",
     // "{% set else = True %}{{ 000 if 111 if 222 if else else 333"

@@ -1,0 +1,31 @@
+[package]
+name = "dbt-ide-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.dbt-ide]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "full"
+path = "fuzz_targets/full.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "variable"
+path = "fuzz_targets/variable.rs"
+test = false
+doc = false
