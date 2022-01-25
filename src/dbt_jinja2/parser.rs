@@ -1,9 +1,7 @@
 use core::panic;
-use std::{collections::VecDeque, hash::BuildHasher, ops::RangeBounds};
 
 use super::lexer::{Token, TokenKind, COMPARE_OPERATORS};
-use defer_lite::defer;
-use rowan::{Checkpoint, GreenNode, GreenNodeBuilder, TextRange};
+use rowan::{Checkpoint, GreenNode, GreenNodeBuilder};
 use SyntaxKind::*;
 
 include!(concat!(env!("OUT_DIR"), "/syntax_kinds.rs"));
@@ -193,7 +191,6 @@ impl Parser {
                 }
                 Some(TokenKind::Comma) => {
                     self.bump();
-                    break;
                 }
                 Some(TokenKind::RightBrace) => {
                     self.bump();
@@ -1158,7 +1155,11 @@ impl Parser {
                 Some(kind) if Self::is_expression_end(kind) => {
                     return None;
                 }
-                Some(_) => self.bump_error(),
+                Some(kind) => {
+                    self.errors
+                        .push(format!("expected one of {:?}, not {:?}", tokens, kind));
+                    self.bump_error();
+                }
             }
         }
     }
@@ -1215,7 +1216,6 @@ mod tests {
 
     fn test_parse(test_case: ParseTestCase) {
         let tokens = tokenize(test_case.input);
-        println!("{:?}", tokens);
         let p = parse(tokens);
         let node = p.syntax();
         print_node(node, 0);
