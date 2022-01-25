@@ -1,8 +1,9 @@
+use core::panic;
 use std::{collections::VecDeque, hash::BuildHasher, ops::RangeBounds};
 
 use super::lexer::{Token, TokenKind, COMPARE_OPERATORS};
 use defer_lite::defer;
-use rowan::{Checkpoint, GreenNode, GreenNodeBuilder};
+use rowan::{Checkpoint, GreenNode, GreenNodeBuilder, TextRange};
 use SyntaxKind::*;
 
 include!(concat!(env!("OUT_DIR"), "/syntax_kinds.rs"));
@@ -28,9 +29,16 @@ impl rowan::Language for Lang {
     }
 }
 
+// struct ParseError {
+//     // text range of errors
+//     range: (u32, u32),
+//     message: String,
+// }
+
 struct Parser {
     tokens: Vec<Token>,
     builder: GreenNodeBuilder<'static>,
+    // TODO: switch errors to use ParseError for text ranges
     errors: Vec<String>,
 }
 
@@ -80,12 +88,118 @@ impl Parser {
     // The main risks are actually understanding Pratt parsing and figuring
     // out the binding powers for all the operators...
 
+    /// Parses a list and adds it to the lossless AST
+    ///
+    /// Assumes that '[' has already been found.
     fn parse_list(&mut self) {
-        todo!()
+        self.skip_ws();
+        if self.current() != Some(TokenKind::LeftBracket) {
+            panic!("parse_list called while current token is not a left bracket");
+        }
+        self.builder.start_node(ExprList.into());
+        self.bump();
+
+        for _ in 0.. {
+            self.skip_ws();
+            if self.current() == Some(TokenKind::RightBracket) {
+                self.bump();
+                break;
+            }
+            self.skip_ws();
+            self.parse_expression(true);
+
+            self.skip_ws();
+            match self.error_until(&[TokenKind::Comma, TokenKind::RightBracket]) {
+                None => {
+                    self.errors
+                        .push("expected ',' or ']', but found end of context".into());
+                    break;
+                }
+                Some(TokenKind::Comma) => {
+                    self.bump();
+                }
+                Some(TokenKind::RightBracket) => {
+                    self.bump();
+                    break;
+                }
+                _ => unreachable!(),
+            }
+        }
+        self.builder.finish_node();
     }
 
+    /// Parses a dict into the lossless AST
+    ///
+    /// Assumes that '{' has already been found
     fn parse_dict(&mut self) {
-        todo!()
+        self.skip_ws();
+        if self.current() != Some(TokenKind::LeftBrace) {
+            panic!("parse_dict called while current token is not a left brace");
+        }
+        self.builder.start_node(ExprDict.into());
+        self.bump();
+
+        for _ in 0.. {
+            self.skip_ws();
+            if self.current() == Some(TokenKind::RightBrace) {
+                self.bump();
+                break;
+            }
+            self.skip_ws();
+
+            self.builder.start_node(Pair.into());
+            self.parse_expression(true);
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::Colon) => self.bump(),
+                Some(TokenKind::RightBrace) => {
+                    self.builder.finish_node();
+                    self.bump();
+                    self.errors
+                        .push("dict key requires \": value\" to complete".into());
+                    break;
+                }
+                Some(kind) if Self::is_context_end(kind) => {
+                    self.builder.finish_node();
+                    self.errors.push(format!(
+                        "expected end of dict, but found end of context {:?}",
+                        kind
+                    ));
+                    break;
+                }
+                Some(kind) => {
+                    self.errors
+                        .push(format!("expected ':', but found {:?}", kind));
+                    self.bump_error();
+                }
+                None => {
+                    self.errors.push("expected ':', but found EOF".into());
+                    break;
+                }
+            }
+            self.skip_ws();
+            self.parse_expression(true);
+            self.builder.finish_node();
+
+            self.skip_ws();
+            match self.error_until(&[TokenKind::Comma, TokenKind::RightBrace]) {
+                None => {
+                    self.errors
+                        .push(format!("expected ',' or '}}', but found end of context"));
+                    break;
+                }
+                Some(TokenKind::Comma) => {
+                    self.bump();
+                    break;
+                }
+                Some(TokenKind::RightBrace) => {
+                    self.bump();
+                    break;
+                }
+                _ => unreachable!(),
+            }
+        }
+        self.builder.finish_node();
     }
 
     fn parse_primary(&mut self) {
@@ -124,7 +238,7 @@ impl Parser {
                 self.builder.start_node(ExprWrapped.into());
                 self.bump();
                 self.parse_tuple(TupleParseMode::WithCondExpr, &[], true);
-                if self.error_until(TokenKind::RightParen) {
+                if self.error_until(&[TokenKind::RightParen]).is_some() {
                     self.bump();
                 } else {
                     self.errors
@@ -143,7 +257,110 @@ impl Parser {
     }
 
     fn parse_call_args(&mut self) {
-        todo!()
+        self.skip_ws();
+        if self.current() != Some(TokenKind::LeftParen) {
+            panic!("parse_call_args called while current token is not a left paren");
+        }
+        self.builder.start_node(CallArguments.into());
+        self.bump();
+
+        // TODO: should validating arg order be post-parse?
+        let mut seen_kwarg = false;
+        let mut seen_dyn_args = false;
+        let mut seen_dyn_kwargs = false;
+
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::RightParen) => {
+                    self.bump();
+                    break;
+                }
+                Some(TokenKind::Multiply) => {
+                    if seen_dyn_args {
+                        self.errors.push("multiple dynamic args found".into());
+                    }
+                    if seen_dyn_kwargs {
+                        self.errors
+                            .push("dynamic args found after dynamic kwargs".into());
+                    }
+                    seen_dyn_args = true;
+
+                    self.builder.start_node(CallDynamicArgs.into());
+                    self.bump();
+                    self.skip_ws();
+                    self.parse_expression(true);
+                    self.builder.finish_node();
+                }
+                Some(TokenKind::Power) => {
+                    if seen_dyn_kwargs {
+                        self.errors.push("multiple dynamic kwargs found".into());
+                    }
+                    seen_dyn_kwargs = true;
+
+                    self.builder.start_node(CallDynamicKwargs.into());
+                    self.bump();
+                    self.skip_ws();
+                    self.parse_expression(true);
+                    self.builder.finish_node();
+                }
+                Some(TokenKind::Name)
+                    if self.next_nonws_tok().map(|t| t.kind) == Some(TokenKind::Assign) =>
+                {
+                    if seen_dyn_kwargs {
+                        self.errors.push("kwarg found after dynamic kwargs".into());
+                    }
+                    seen_kwarg = true;
+
+                    self.builder.start_node(CallStaticKwarg.into());
+                    self.bump();
+                    self.skip_ws();
+                    self.bump();
+                    self.parse_expression(true);
+                    self.builder.finish_node();
+                }
+                Some(kind) if Self::is_context_end(kind) => {
+                    self.errors.push(format!(
+                        "incomplete call args before context end {:?}",
+                        kind
+                    ));
+                    break;
+                }
+                None => break,
+                Some(_) => {
+                    if seen_kwarg {
+                        self.errors.push("arg found after kwarg".into());
+                    }
+                    if seen_dyn_args {
+                        self.errors.push("arg found after dynamic args".into());
+                    }
+                    if seen_dyn_kwargs {
+                        self.errors.push("arg found after dynamic kwargs".into());
+                    }
+
+                    self.builder.start_node(CallStaticArg.into());
+                    self.parse_expression(true);
+                    self.builder.finish_node();
+                }
+            }
+
+            match self.error_until(&[TokenKind::Comma, TokenKind::RightParen]) {
+                None => {
+                    self.errors
+                        .push("expected ',' or ')', not end of context".into());
+                    break;
+                }
+                Some(TokenKind::Comma) => {
+                    self.bump();
+                }
+                Some(TokenKind::RightParen) => {
+                    self.bump();
+                    break;
+                }
+                _ => unreachable!(),
+            }
+        }
+        self.builder.finish_node()
     }
 
     fn parse_call(&mut self, checkpoint: Checkpoint) {
@@ -244,16 +461,15 @@ impl Parser {
 
                     for _ in 0.. {
                         self.skip_ws();
-                        match self.current() {
-                            Some(TokenKind::RightBracket) => {
-                                ended_correctly = true;
+                        match self.error_until(&[TokenKind::RightBracket, TokenKind::Comma]) {
+                            None => {
+                                self.errors.push(format!(
+                                    "expected ']' for subscript, but found end of context",
+                                ));
                                 break;
                             }
-                            Some(kind) if Self::is_context_end(kind) => {
-                                self.errors.push(format!(
-                                    "expected ']' for subscript, but found end of context: {:?}",
-                                    kind
-                                ));
+                            Some(TokenKind::RightBracket) => {
+                                ended_correctly = true;
                                 break;
                             }
                             Some(TokenKind::Comma) => {
@@ -265,13 +481,7 @@ impl Parser {
                                 }
                                 self.parse_subscribed();
                             }
-                            kind => {
-                                self.bump_error();
-                                self.errors.push(format!(
-                                    "expected ',' for tuple or ']' for subscript, but found {:?}",
-                                    kind
-                                ));
-                            }
+                            _ => unreachable!(),
                         }
                     }
 
@@ -408,7 +618,7 @@ impl Parser {
                     }
                 }
                 if should_parse {
-                    self.builder.start_node(Arguments.into());
+                    self.builder.start_node(TestArguments.into());
                     {
                         let arg_checkpoint = self.builder.checkpoint();
                         self.parse_primary();
@@ -802,7 +1012,7 @@ impl Parser {
         self.bump();
 
         self.parse_tuple(TupleParseMode::WithCondExpr, &[], false);
-        if self.error_until(TokenKind::VariableEnd) {
+        if self.error_until(&[TokenKind::VariableEnd]).is_some() {
             self.bump();
         } else {
             self.errors
@@ -935,17 +1145,15 @@ impl Parser {
 
     /// adds new tokens as syntax errors until the specified token is found.
     /// returns a boolean denoting if it successfully found the given token
-    fn error_until(&mut self, token: TokenKind) -> bool {
+    fn error_until(&mut self, tokens: &[TokenKind]) -> Option<TokenKind> {
         loop {
             match self.current() {
-                None => {
-                    return false;
+                None => return None,
+                Some(t) if tokens.contains(&t) => {
+                    return Some(t);
                 }
-                Some(t) if t == token => {
-                    return true;
-                }
-                Some(t) if Self::is_context_end(t) => {
-                    return false;
+                Some(kind) if Self::is_context_end(kind) => {
+                    return None;
                 }
                 Some(_) => self.bump_error(),
             }
@@ -1002,73 +1210,96 @@ mod tests {
         input: &'static str,
     }
 
-    #[test]
-    fn test_parse() {
-        let test_cases = [
-            // ParseTestCase {
-            //     input: "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}",
-            // },
-            ParseTestCase {
-                input: "{% raw %}{% endraw %}",
-            },
-            ParseTestCase {
-                input: "{{ 1,2, 3}} test",
-            },
-            ParseTestCase {
-                input: "{{ 000if 111or 222if 333 if else else 444}}",
-            },
-            ParseTestCase {
-                input: "{{ 111 and 222 or not not not 333 }}",
-            },
-            ParseTestCase {
-                input: "{{ 11 > 9 < 12 not in 13 }}",
-            },
-            ParseTestCase {
-                input: "{{ 1 + 2 + 3 }}",
-            },
-            ParseTestCase {
-                input: "{{ 1 ~ 'test' 'something' ~ blah }}",
-            },
-            ParseTestCase {
-                input: "{{ 1 * -2 / 3 + +3 // 5 ** -3 ** 4 }}",
-            },
-            ParseTestCase {
-                input: "{{ 1 * -2 / 3 + (+3 // 5 ** -3) ** 4 }}",
-            },
-            ParseTestCase {
-                input: "{{ foo . 0 .blah [0] [:(1,):3, 2] }}",
-            },
-            ParseTestCase {
-                input: "{{ foo | filter | filter2 | filt.er3 }}",
-            },
-            ParseTestCase {
-                input: "{{ foo | filter.3 }}",
-            },
-            ParseTestCase {
-                input: "{{ foo | filter.3 }}",
-            },
-            ParseTestCase {
-                input: "{{ foo is divisibleby 3 is something }}",
-            },
-            ParseTestCase {
-                input: "{{ - (1 * 2).0 is divisibleby 3 }}",
-            },
-            // ParseTestCase {
-            //     input: "{% set else = True %}{{ 000 if 111 if 222 if else else 333"
-            // }
-            // ParseTestCase {
-            //     input: "{% for i in 1, 2, 3 %}{{i}}{% endfor %}",
-            // },
-            // ParseTestCase {
-            //     input: "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}"
-            // },
-        ];
-        for test_case in test_cases {
-            let tokens = tokenize(test_case.input);
-            let p = parse(tokens);
-            let node = p.syntax();
-            print_node(node, 0);
-            println!("{:#?}", p.errors);
-        }
+    fn test_parse(test_case: ParseTestCase) {
+        let tokens = tokenize(test_case.input);
+        let p = parse(tokens);
+        let node = p.syntax();
+        print_node(node, 0);
+        println!("{:#?}", p.errors);
     }
+
+    macro_rules! test_case {
+        ($name:ident, $input:expr) => {
+            #[test]
+            fn $name() {
+                test_parse(ParseTestCase { input: $input });
+            }
+        };
+    }
+
+    test_case!(test_basic_raw, "{% raw %}raw data{% endraw %}");
+
+    test_case!(test_tuple, "{{ 1,2, 3}} test");
+
+    test_case!(
+        test_nested_ternary,
+        "{{ 000if 111or 222if 333 if else else 444}}"
+    );
+
+    test_case!(test_boolean, "{{ 111 and 222 or not not not 333 }}");
+
+    test_case!(test_compare, "{{ 11 > 9 < 12 not in 13 }}");
+
+    test_case!(test_math1, "{{ 1 + 2 - 3 }}");
+
+    test_case!(test_concat, "{{ 1 ~ 'test' 'something' ~ blah }}");
+
+    test_case!(test_math2, "{{ 1 * -2 / 3 + +3 // 5 ** -3 ** 4 }}");
+
+    test_case!(test_primary, "{{ 1 * -2 / 3 + (+3 // 5 ** -3) ** 4 }}");
+
+    test_case!(test_subscript, "{{ foo . 0 .blah [0] [:(1,):3, 2] }}");
+
+    test_case!(test_slice, "{{ blah [::] }}");
+
+    test_case!(test_slice_extra, "{{ blah [::a b c] }}");
+
+    test_case!(test_filter, "{{ foo | filter | filter2 | filt.er3 }}");
+
+    test_case!(test_filter_bad_nestedname, "{{ foo | filter.3 }}");
+
+    test_case!(test_test, "{{ foo is divisibleby 3 is something }}");
+
+    test_case!(test_test_bad_nested_is, "{{ foo is test1 is test2 }}");
+
+    test_case!(test_test_precedence, "{{ - (1 * 2).0 is divisibleby 3 }}");
+
+    test_case!(test_list, "{{ [1, 3, abc] }}");
+
+    test_case!(test_list_trailing_comma, "{{ [1, 3, abc, ] }}");
+
+    test_case!(test_list_no_end, "{{ [1, 3, abc, }}");
+
+    test_case!(test_list_extra_tok, "{{ [1, 3, abc def, test ] }}");
+
+    test_case!(test_list_extra_tok_no_end, "{{ [1, 3, abc def }}");
+
+    test_case!(test_dict, "{{ {a: 1, } }}");
+
+    test_case!(test_nested_dict, "{{ {a: {1: 2}, {2: 3}: blah} }}");
+
+    test_case!(test_dict_no_value, "{{ {a: 1, 2 } }}");
+
+    test_case!(test_dict_extra_key, "{{ {a: 1, 2 3: 1 } }}");
+
+    test_case!(test_dict_extra_value, "{{ {a: 1, 2: 1 2 } }}");
+
+    test_case!(test_dict_no_end, "{{ {a: 1, 2: ");
+
+    test_case!(test_call, "{{ call(1, something) ");
+
+    test_case!(
+        test_call_arg_ordering,
+        "{{ call(arg1, **kwargs, *args, kwarg=kw, arg2, arg3) "
+    );
+
+    test_case!(
+        test_call_extra_toks,
+        "{{ call(arg1 a, **kwargs b, *args c, kwarg d=kw e, arg2 f, arg3 g) "
+    );
+
+    // "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}",
+    // "{% set else = True %}{{ 000 if 111 if 222 if else else 333"
+    // "{% for i in 1, 2, 3 %}{{i}}{% endfor %}",
+    // "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}"
 }

@@ -153,8 +153,6 @@ composites = [
     "comment",
     # a "k: v" pair in dicts
     "pair",
-    # a "k=v" pair in kwargs
-    "keyword",
     # operation on some expression
     "operand",
     # element in tuple
@@ -168,5 +166,10 @@ composites = [
     # condition to check for ternary
     "ternary condition",
     "subscript",
-    "arguments",
+    "test arguments",
+    "call arguments",
+    "call dynamic args",
+    "call dynamic kwargs",
+    "call static arg",
+    "call static kwarg",
 ]
