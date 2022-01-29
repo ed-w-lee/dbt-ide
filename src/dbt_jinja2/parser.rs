@@ -1,4 +1,5 @@
 use core::panic;
+use std::collections::VecDeque;
 
 use super::lexer::{Token, TokenKind, COMPARE_OPERATORS};
 use rowan::{Checkpoint, GreenNode, GreenNodeBuilder};
@@ -33,9 +34,33 @@ impl rowan::Language for Lang {
 //     message: String,
 // }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tag {
+    Root,
+
+    For,
+    If,
+    Block,
+    Extends,
+    Print,
+    Include,
+    From,
+    Import,
+    Set,
+    With,
+    Autoescape,
+
+    Do,              // jinja2.ext.do
+    Macro,           // Jinja thing that's sorta been co-opted by dbt
+    Materialization, // custom materializations
+    Test,            // generic tests
+    Docs,            // markdown docs
+}
+
 struct Parser {
     tokens: Vec<Token>,
     builder: GreenNodeBuilder<'static>,
+    tag_stack: VecDeque<Tag>,
     // TODO: switch errors to use ParseError for text ranges
     errors: Vec<String>,
 }
@@ -46,11 +71,22 @@ enum TupleParseMode {
     NoCondExpr,
 }
 
+enum AssignTargetTuple<'a> {
+    WithTuple(&'a [&'static str]),
+    NoTuple,
+}
+
+enum AssignTargetNameMode<'a> {
+    NameOnly,
+    NotNameOnly(bool, AssignTargetTuple<'a>),
+}
+
 impl Parser {
     // Recursive descent
 
     fn parse(mut self) -> Parse {
         self.builder.start_node(Template.into());
+        self.tag_stack.push_back(Tag::Root);
         loop {
             match self.current() {
                 None => break,
@@ -67,7 +103,7 @@ impl Parser {
                     self.parse_variable();
                 }
                 Some(TokenKind::BlockBegin) => {
-                    panic!("no work on block_begin yet");
+                    self.parse_statement();
                 }
                 Some(t) => {
                     panic!("unexpected top-level token: {:?}", t);
@@ -75,6 +111,8 @@ impl Parser {
             }
         }
 
+        self.empty_tag_stack_until(Tag::Root);
+        self.tag_stack.pop_back();
         self.builder.finish_node();
         Parse {
             green_node: self.builder.finish(),
@@ -87,6 +125,291 @@ impl Parser {
     // but it may be worth trying to write a Pratt parser for clarity.
     // The main risks are actually understanding Pratt parsing and figuring
     // out the binding powers for all the operators...
+
+    /// Assumes that we know the next non-whitespace token exists, and that the
+    /// 2nd non-whitespace token is '.'
+    fn parse_namespace_ref(&mut self) {
+        self.builder.start_node(ExprNamespaceRef.into());
+        self.skip_ws();
+        match self.current() {
+            Some(TokenKind::Name) => self.bump(),
+            Some(kind) if Self::is_expression_end(kind) => {
+                self.errors.push(
+                    "expected name for 1st part of namespace ref, but found end of context".into(),
+                );
+                self.builder.finish_node();
+                return;
+            }
+            Some(kind) => {
+                self.errors.push(format!(
+                    "expected name for 1st part of namespace ref, but found {:?}",
+                    kind
+                ));
+                self.builder.finish_node();
+                return;
+            }
+            None => unreachable!(),
+        }
+        self.skip_ws();
+        self.bump(); // dot
+        match self.current() {
+            Some(TokenKind::Name) => self.bump(),
+            Some(kind) if Self::is_expression_end(kind) => {
+                self.errors.push(
+                    "expected name for 2nd part of namespace ref, but found end of context".into(),
+                );
+                self.builder.finish_node();
+                return;
+            }
+            kind => {
+                self.errors.push(format!(
+                    "expected name for 2nd part of namespace ref, but found {:?}",
+                    kind
+                ));
+                self.builder.finish_node();
+                return;
+            }
+        }
+        self.builder.finish_node();
+        return;
+    }
+
+    /// Parses the thing before an assignment (e.g. `_this_ = expression`)
+    ///
+    /// python default args:
+    /// * `name_mode=NotNameOnly(false, WithTuple([]))`
+    fn parse_assign_target(&mut self, name_mode: AssignTargetNameMode) {
+        self.skip_ws();
+        match name_mode {
+            AssignTargetNameMode::NameOnly => match self.current() {
+                Some(TokenKind::Name) => self.bump(),
+                Some(kind) if Self::is_expression_end(kind) => {
+                    self.errors
+                        .push("expected name for assign target, but found end of context".into());
+                    return;
+                }
+                kind => {
+                    self.errors.push(format!(
+                        "expected name for assign target, but found {:?}",
+                        kind
+                    ));
+                    return;
+                }
+            },
+            AssignTargetNameMode::NotNameOnly(with_namespace, with_tuple) => {
+                if with_namespace && self.next_nonws_tok().map(|t| t.kind) == Some(TokenKind::Dot) {
+                    self.parse_namespace_ref();
+                    return;
+                }
+                match with_tuple {
+                    AssignTargetTuple::WithTuple(extra_end_rules) => {
+                        self.parse_tuple(TupleParseMode::Simplified, &extra_end_rules, false);
+                    }
+                    AssignTargetTuple::NoTuple => {
+                        self.parse_primary();
+                    }
+                }
+            }
+        }
+    }
+
+    /// when we return, both `StmtFor` and `ForStart` shouldn't be finished yet.
+    fn parse_for(&mut self) {
+        self.builder.start_node(StmtFor.into());
+        self.builder.start_node(ForStart.into());
+        self.bump(); // '{%'
+        self.skip_ws();
+        self.bump(); // 'for'
+        self.parse_assign_target(AssignTargetNameMode::NotNameOnly(
+            false,
+            AssignTargetTuple::WithTuple(&["in"]),
+        ));
+        self.skip_ws();
+        match self.current_tok() {
+            None => {
+                self.errors
+                    .push("expected \"in\" for for-loop, but found EOF".into());
+                return;
+            }
+            Some(tok) if Self::is_expression_end(tok.kind) => {
+                self.errors
+                    .push("expected \"in\" for for-loop, but found end of context".into());
+                return;
+            }
+            Some(tok) if tok.is_name("in") => {
+                self.bump();
+            }
+            Some(tok) if tok.kind == TokenKind::Name => {
+                let text = tok.text.clone();
+                self.errors.push(format!(
+                    "expected \"in\" for for-loop, but found unexpected \"{:?}\"",
+                    text
+                ));
+                return;
+            }
+            Some(tok) => {
+                let kind = tok.kind;
+                self.errors.push(format!(
+                    "expected name \"in\" for for-loop, but found unexpected \"{:?}\"",
+                    kind
+                ));
+                return;
+            }
+        }
+        self.skip_ws();
+        // iter
+        self.parse_tuple(TupleParseMode::NoCondExpr, &["recursive"], false);
+        self.skip_ws();
+        // test
+        if let Some(tok) = self.current_tok() {
+            if tok.is_name("if") {
+                self.bump();
+                self.parse_expression(true);
+            }
+        }
+        self.skip_ws();
+        // recursive
+        if let Some(tok) = self.current_tok() {
+            if tok.is_name("recursive") {
+                self.bump();
+            }
+        }
+    }
+
+    /// Parses a `{% %}` statement
+    ///
+    /// The lexer provides us the guarantee that these are balanced, and that
+    /// other "context" tokens (e.g. `{{` or `{#` don't exist within this
+    /// balance)
+    ///
+    /// Assumes `{%` is the next token
+    fn parse_statement(&mut self) {
+        assert!(self.current() == Some(TokenKind::BlockBegin));
+
+        // a statement may be {% endfor %}, which finishes an additional node
+        let mut finished_block = false;
+        // we might want to finish some incomplete nodes because we hit a root
+        // tag (e.g. macro or materialization)
+        let next_tok = self.next_nonws_tok();
+        match next_tok {
+            None => {
+                self.errors.push("expected tag name, but found EOF".into());
+                self.builder.start_node(StmtUnknown.into());
+                self.bump();
+                self.error_until(&[]);
+                self.builder.finish_node();
+                return;
+            }
+            Some(t) if Self::is_expression_end(t.kind) => {
+                self.errors
+                    .push("expected tag name, but end of block".into());
+                self.builder.start_node(StmtUnknown.into());
+                self.bump();
+                self.skip_ws();
+                self.bump();
+                self.builder.finish_node();
+                return;
+            }
+            Some(_) => (),
+        }
+        let tok = self.next_nonws_tok().unwrap().clone();
+        if tok.kind != TokenKind::Name {
+            self.builder.start_node(StmtUnknown.into());
+            self.bump();
+            self.errors.push(format!(
+                "expected tag token at the beginning of statement, not {:?}",
+                tok.kind
+            ));
+        } else {
+            match tok.text.as_str() {
+                "for" => {
+                    self.tag_stack.push_back(Tag::For);
+                    self.parse_for();
+                }
+                "endfor" => {
+                    // find the top-most for-tag
+                    if self.empty_tag_stack_until(Tag::For) {
+                        self.tag_stack.pop_back();
+                        finished_block = true;
+                        self.builder.start_node(ForEnd.into());
+                        self.bump(); // '{%'
+                        self.skip_ws();
+                        self.bump(); // 'endfor'
+                    } else {
+                        self.errors
+                            .push("found unmatched \"endfor\" statement".into());
+                        self.builder.start_node(StmtUnknown.into());
+                        self.bump();
+                        self.skip_ws();
+                    }
+                }
+                "if" => todo!(),
+                "endif" => todo!(),
+                "else" => todo!(),
+                "block" => todo!(),
+                "extends" => todo!(),
+                "print" => todo!(),
+                "include" => todo!(),
+                "from" => todo!(),
+                "import" => todo!(),
+                "set" => todo!(),
+                "with" => todo!(),
+                "autoescape" => todo!(),
+                "call" => todo!(),
+                "filter" => todo!(),
+                "do" => todo!(),
+
+                // these statements must be root-level blocks, so let's
+                // just empty the tag stack until we're back at the
+                // root-level
+                "macro" => {
+                    self.empty_tag_stack_until(Tag::Root);
+                    todo!();
+                }
+                "materialization" => {
+                    self.empty_tag_stack_until(Tag::Root);
+                    todo!();
+                }
+                "test" => {
+                    self.empty_tag_stack_until(Tag::Root);
+                    todo!();
+                }
+                "docs" => {
+                    self.empty_tag_stack_until(Tag::Root);
+                    todo!();
+                }
+                unknown_tag => {
+                    self.builder.start_node(StmtUnknown.into());
+                    self.bump();
+                    self.skip_ws();
+                    self.bump_error();
+                    self.errors
+                        .push(format!("found unknown tag {:?}", unknown_tag));
+                }
+            }
+        }
+        self.skip_ws();
+        match self.error_until(&[TokenKind::Colon, TokenKind::BlockEnd]) {
+            None => self
+                .errors
+                .push("expected ':' or '%}', but found EOF".into()),
+            Some(TokenKind::Colon) => {
+                self.bump();
+                self.skip_ws();
+                match self.error_until(&[TokenKind::BlockEnd]) {
+                    None => self.errors.push("expected '%}', but found EOF".into()),
+                    Some(TokenKind::BlockEnd) => self.bump(),
+                    Some(_) => unreachable!(),
+                }
+            }
+            Some(TokenKind::BlockEnd) => self.bump(),
+            Some(_) => unreachable!(),
+        }
+        self.builder.finish_node();
+        if finished_block {
+            self.builder.finish_node();
+        }
+    }
 
     /// Parses a list and adds it to the lossless AST
     ///
@@ -928,6 +1251,8 @@ impl Parser {
         }
     }
 
+    /// python default args:
+    /// * `with_condexpr=True`
     fn parse_expression(&mut self, with_condexpr: bool) {
         if with_condexpr {
             self.parse_ternary();
@@ -936,6 +1261,10 @@ impl Parser {
         }
     }
 
+    /// python default args:
+    /// * `mode=WithCondExpr`
+    /// * `extra_end_rules=[]`
+    /// * `explicit_parentheses=False`
     fn parse_tuple(
         &mut self,
         mode: TupleParseMode,
@@ -1009,6 +1338,9 @@ impl Parser {
 
     fn parse_variable(&mut self) {
         self.builder.start_node(Variable.into());
+        if self.current() != Some(TokenKind::VariableBegin) {
+            panic!("parse_variable called while current token is not variable begin");
+        }
         self.bump();
 
         self.parse_tuple(TupleParseMode::WithCondExpr, &[], false);
@@ -1163,6 +1495,34 @@ impl Parser {
             }
         }
     }
+
+    // utilities for traversing the tag stack
+
+    /// Finds the top-most entry matching the specified tag in the tag stack.
+    /// If found, the tag stack is truncated until that point.
+    /// If no such tag is found, the tag stack is not truncated at all
+    ///
+    /// Returns whether the tag was found in the stack or not
+    fn empty_tag_stack_until(&mut self, end_tag: Tag) -> bool {
+        let top_tag = self
+            .tag_stack
+            .iter()
+            .rev()
+            .enumerate()
+            .find_map(|(i, tag)| if tag == &end_tag { Some(i) } else { None });
+        match top_tag {
+            Some(i) => {
+                for _ in 0..i {
+                    let tag = self.tag_stack.pop_back().unwrap();
+                    self.builder.finish_node();
+                    self.errors
+                        .push(format!("expected tag {:?} to be closed", tag));
+                }
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 pub struct Parse {
@@ -1176,6 +1536,7 @@ pub fn parse(tokens: Vec<Token>) -> Parse {
     tokens.reverse();
     Parser {
         tokens,
+        tag_stack: VecDeque::new(),
         builder: GreenNodeBuilder::new(),
         errors: Vec::new(),
     }
@@ -1302,6 +1663,34 @@ mod tests {
         "{{ call(arg1 a, **kwargs b, *args c, kwarg d=kw e, arg2 f, arg3 g) "
     );
 
+    test_case!(test_block, "{% %}");
+
+    test_case!(test_unknown_tag, "{% unk %}");
+
+    test_case!(test_for_basic, "{% for assign in expr %} blah {% endfor %}");
+
+    test_case!(
+        test_for_nested,
+        "{% for one in 1 %} {% for two in 2 %} {{ two }} {% endfor %} {% endfor %}"
+    );
+
+    test_case!(
+        test_extra_colon,
+        "{% for one in 1, 2 : %} loop {% endfor %}"
+    );
+
+    test_case!(test_open_for, "{% for one in 1, 2 %} {{ one }}");
+
+    test_case!(
+        test_extra_endfor,
+        "{% for one in 1, 2 %} {{ one }} {% endfor %} {%endfor%}"
+    );
+
+    test_case!(
+        test_endfor_extra,
+        "{% for one in 1, 2 %} {{ one }} {% endfor 2 %}"
+    );
+
     // fuzz-generated tests
 
     test_case!(test_variable_dict_dict, "{{{{");
@@ -1310,6 +1699,4 @@ mod tests {
 
     // "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}",
     // "{% set else = True %}{{ 000 if 111 if 222 if else else 333"
-    // "{% for i in 1, 2, 3 %}{{i}}{% endfor %}",
-    // "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}"
 }

@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 
 include!(concat!(env!("OUT_DIR"), "/token_kinds.rs"));
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
     pub text: String,

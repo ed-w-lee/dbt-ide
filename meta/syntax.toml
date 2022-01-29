@@ -85,6 +85,8 @@ statements = [
     "assign",
     # assigns a multi-line block to a target
     "assign block",
+    # bad tag or something
+    "unknown",
 ]
 
 expressions = [
@@ -172,4 +174,7 @@ composites = [
     "call dynamic kwargs",
     "call static arg",
     "call static kwarg",
+    "for start",
+    "for else",
+    "for end",
 ]
