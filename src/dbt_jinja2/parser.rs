@@ -39,7 +39,9 @@ enum Tag {
     Root,
 
     For,
+    ForElse,
     If,
+    IfElse,
     Block,
     Extends,
     Print,
@@ -111,7 +113,7 @@ impl Parser {
             }
         }
 
-        self.empty_tag_stack_until(Tag::Root);
+        self.empty_tag_stack_until(&[Tag::Root]);
         self.tag_stack.pop_back();
         self.builder.finish_node();
         Parse {
@@ -328,7 +330,7 @@ impl Parser {
                 }
                 "endfor" => {
                     // find the top-most for-tag
-                    if self.empty_tag_stack_until(Tag::For) {
+                    if self.empty_tag_stack_until(&[Tag::For, Tag::ForElse]) {
                         self.tag_stack.pop_back();
                         finished_block = true;
                         self.builder.start_node(ForEnd.into());
@@ -343,9 +345,32 @@ impl Parser {
                         self.skip_ws();
                     }
                 }
+                "else" => {
+                    if self.empty_tag_stack_until(&[Tag::For, Tag::If]) {
+                        let last_tag = self.tag_stack.pop_back().unwrap();
+                        match last_tag {
+                            Tag::For => {
+                                self.tag_stack.push_back(Tag::ForElse);
+                                self.builder.start_node(ForElse.into());
+                                self.bump(); // '{%'
+                                self.skip_ws();
+                                self.bump(); // 'else'
+                            }
+                            Tag::If => {
+                                todo!()
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        self.errors
+                            .push("found unmatched \"else\" statement".into());
+                        self.builder.start_node(StmtUnknown.into());
+                        self.bump();
+                        self.skip_ws();
+                    }
+                }
                 "if" => todo!(),
                 "endif" => todo!(),
-                "else" => todo!(),
                 "block" => todo!(),
                 "extends" => todo!(),
                 "print" => todo!(),
@@ -363,19 +388,19 @@ impl Parser {
                 // just empty the tag stack until we're back at the
                 // root-level
                 "macro" => {
-                    self.empty_tag_stack_until(Tag::Root);
+                    self.empty_tag_stack_until(&[Tag::Root]);
                     todo!();
                 }
                 "materialization" => {
-                    self.empty_tag_stack_until(Tag::Root);
+                    self.empty_tag_stack_until(&[Tag::Root]);
                     todo!();
                 }
                 "test" => {
-                    self.empty_tag_stack_until(Tag::Root);
+                    self.empty_tag_stack_until(&[Tag::Root]);
                     todo!();
                 }
                 "docs" => {
-                    self.empty_tag_stack_until(Tag::Root);
+                    self.empty_tag_stack_until(&[Tag::Root]);
                     todo!();
                 }
                 unknown_tag => {
@@ -1503,13 +1528,19 @@ impl Parser {
     /// If no such tag is found, the tag stack is not truncated at all
     ///
     /// Returns whether the tag was found in the stack or not
-    fn empty_tag_stack_until(&mut self, end_tag: Tag) -> bool {
+    fn empty_tag_stack_until(&mut self, end_tags: &[Tag]) -> bool {
         let top_tag = self
             .tag_stack
             .iter()
             .rev()
             .enumerate()
-            .find_map(|(i, tag)| if tag == &end_tag { Some(i) } else { None });
+            .find_map(|(i, tag)| {
+                if end_tags.contains(tag) {
+                    Some(i)
+                } else {
+                    None
+                }
+            });
         match top_tag {
             Some(i) => {
                 for _ in 0..i {
@@ -1670,6 +1701,11 @@ mod tests {
     test_case!(test_for_basic, "{% for assign in expr %} blah {% endfor %}");
 
     test_case!(
+        test_for_else,
+        "{% for assign in expr %} blah {% else %} else {% endfor %}"
+    );
+
+    test_case!(
         test_for_nested,
         "{% for one in 1 %} {% for two in 2 %} {{ two }} {% endfor %} {% endfor %}"
     );
@@ -1689,6 +1725,11 @@ mod tests {
     test_case!(
         test_endfor_extra,
         "{% for one in 1, 2 %} {{ one }} {% endfor 2 %}"
+    );
+
+    test_case!(
+        test_extra_else,
+        "{% for assign in expr %} blah {% else %} else {% endfor %} {% else %}"
     );
 
     // fuzz-generated tests
