@@ -38,25 +38,31 @@ impl rowan::Language for Lang {
 enum Tag {
     Root,
 
+    // base macros
     For,
     ForElse,
     If,
+    Elif,
     IfElse,
+    Set,
+    Call,
+    Filter,
+
+    // extensions to base Jinja
+    Macro,           // not actually an extension, but dbt customizes this
+    Materialization, // custom materializations
+    Test,            // generic tests
+    Docs,            // markdown docs
+
+    // Assume these aren't used, because I'm lazy :eyes:
+    With,
     Block,
     Extends,
     Print,
     Include,
     From,
     Import,
-    Set,
-    With,
     Autoescape,
-
-    Do,              // jinja2.ext.do
-    Macro,           // Jinja thing that's sorta been co-opted by dbt
-    Materialization, // custom materializations
-    Test,            // generic tests
-    Docs,            // markdown docs
 }
 
 struct Parser {
@@ -79,7 +85,17 @@ enum AssignTargetTuple<'a> {
 }
 
 enum AssignTargetNameMode<'a> {
+    /// ```
+    /// name_only: true
+    /// ```
     NameOnly,
+    /// ```
+    /// name_only: false
+    /// (
+    ///     with_namespace: false,
+    ///     with_tuple: With(extra_end_rules)
+    /// )
+    /// ```
     NotNameOnly(bool, AssignTargetTuple<'a>),
 }
 
@@ -278,6 +294,283 @@ impl Parser {
         }
     }
 
+    fn parse_if(&mut self) {
+        self.builder.start_node(StmtIf.into());
+        self.builder.start_node(IfStart.into());
+        self.bump(); // '{%'
+        self.skip_ws();
+        self.bump(); // 'if'
+
+        // parse test
+        self.parse_tuple(TupleParseMode::NoCondExpr, &[], false);
+    }
+
+    fn parse_elif(&mut self) {
+        self.builder.start_node(IfElif.into());
+        self.bump();
+        self.skip_ws();
+        self.bump();
+
+        self.parse_tuple(TupleParseMode::NoCondExpr, &[], false);
+    }
+
+    /// returns if an assign block was created
+    fn parse_set(&mut self) -> bool {
+        let block_checkpoint = self.builder.checkpoint();
+        let start_checkpoint = self.builder.checkpoint();
+
+        self.bump(); // '{%'
+        self.skip_ws();
+        self.bump(); // 'set'
+        self.skip_ws();
+
+        self.parse_assign_target(AssignTargetNameMode::NotNameOnly(
+            true,
+            AssignTargetTuple::WithTuple(&[]),
+        ));
+        self.skip_ws();
+
+        if self.current() == Some(TokenKind::Assign) {
+            self.builder
+                .start_node_at(block_checkpoint, StmtAssign.into());
+            self.bump(); // '='
+            self.parse_tuple(TupleParseMode::WithCondExpr, &[], false);
+            return false;
+        }
+        self.builder
+            .start_node_at(block_checkpoint, StmtAssignBlock.into());
+        self.builder
+            .start_node_at(start_checkpoint, AssignBlockStart.into());
+        self.parse_filter(None, false);
+
+        true
+    }
+
+    /// assumes current token in '('
+    /// returns at end-of-context or done with ')'
+    fn parse_signature(&mut self) {
+        if self.current() != Some(TokenKind::LeftParen) {
+            panic!(
+                "called parse_signature expecting '(' but found {:?}",
+                self.current()
+            );
+        }
+        self.builder.start_node(Signature.into());
+        self.bump(); // '('
+        let mut seen_kwarg = false;
+        for _ in 0.. {
+            match self.current() {
+                None => {
+                    self.errors.push("found EOF while parsing signature".into());
+                    break;
+                }
+                Some(kind) if Self::is_expression_end(kind) => {
+                    self.errors
+                        .push("found end of context while parsing signature".into());
+                    break;
+                }
+                Some(TokenKind::RightParen) => {
+                    self.bump();
+                    break;
+                }
+                Some(_) => {
+                    let checkpoint = self.builder.checkpoint();
+                    self.parse_assign_target(AssignTargetNameMode::NameOnly);
+                    self.skip_ws();
+                    if self.current() == Some(TokenKind::Assign) {
+                        seen_kwarg = true;
+                        self.builder
+                            .start_node_at(checkpoint, SignatureDefaultArg.into());
+                        self.bump();
+                        self.parse_expression(true);
+                        self.builder.finish_node();
+                    } else {
+                        if seen_kwarg {
+                            self.errors
+                                .push("non-default argument following a default argument".into());
+                        }
+                        self.builder.start_node_at(checkpoint, SignatureArg.into());
+                        self.builder.finish_node();
+                    }
+                }
+            }
+            match self.error_until(&[TokenKind::Comma, TokenKind::RightParen]) {
+                None => {
+                    self.errors
+                        .push("expected ',' or ')', not end of context".into());
+                    break;
+                }
+                Some(TokenKind::Comma) => {
+                    self.bump();
+                }
+                Some(TokenKind::RightParen) => {
+                    self.bump();
+                    break;
+                }
+                _ => unreachable!(),
+            }
+        }
+        self.builder.finish_node();
+    }
+
+    fn parse_call_block(&mut self) {
+        self.builder.start_node(StmtCallBlock.into());
+        self.builder.start_node(CallBlockStart.into());
+        self.bump(); // '{%'
+        self.skip_ws();
+        self.bump(); // 'call'
+
+        self.skip_ws();
+        if self.current() == Some(TokenKind::LeftParen) {
+            self.parse_signature();
+        }
+
+        // TODO: this needs to be an ExprCall (validate either in AST or here)
+        self.parse_expression(true);
+    }
+
+    fn parse_filter_block(&mut self) {
+        self.builder.start_node(StmtFilterBlock.into());
+        self.builder.start_node(FilterBlockStart.into());
+        self.bump(); // '{%'
+        self.skip_ws();
+        self.bump(); // 'filter'
+        self.parse_filter(None, true);
+    }
+
+    fn parse_do(&mut self) {
+        self.builder.start_node(StmtDo.into());
+        self.bump(); // '{%'
+        self.skip_ws();
+        self.bump(); // 'do'
+        self.skip_ws();
+        self.parse_tuple(TupleParseMode::WithCondExpr, &[], false);
+    }
+
+    fn parse_macro(&mut self) {
+        self.builder.start_node(StmtMacro.into());
+        self.builder.start_node(MacroBlockStart.into());
+        self.bump(); // '{%'
+        self.skip_ws();
+        self.bump(); // 'macro'
+
+        self.skip_ws();
+        self.parse_assign_target(AssignTargetNameMode::NameOnly);
+        self.skip_ws();
+        match self.error_until(&[TokenKind::LeftParen]) {
+            None => {
+                self.errors.push(
+                    "expected function signature after macro name but found end of context".into(),
+                );
+            }
+            Some(TokenKind::LeftParen) => {
+                self.parse_signature();
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_materialization(&mut self) {
+        self.builder.start_node(StmtMaterialization.into());
+        self.builder.start_node(MaterializationBlockStart.into());
+        self.bump();
+        self.skip_ws();
+        self.bump(); // 'materialization'
+
+        self.skip_ws();
+        self.parse_assign_target(AssignTargetNameMode::NameOnly);
+
+        for _ in 0.. {
+            self.skip_ws();
+            if self.current() != Some(TokenKind::Comma) {
+                break;
+            }
+            self.bump();
+
+            self.skip_ws();
+            match self.current_tok() {
+                None => {
+                    self.errors.push(
+                        "expected adapter specification for custom materialization but found EOF"
+                            .into(),
+                    );
+                    break;
+                }
+                Some(t) if Self::is_expression_end(t.kind) => {
+                    self.errors.push("expected adapter specification for custom materialization but found end of context".into());
+                    break;
+                }
+                Some(t) if t.is_name("default") => {
+                    self.builder.start_node(MaterializationDefault.into());
+                    self.bump();
+                    self.builder.finish_node();
+                }
+                Some(t) if t.is_name("adapter") => {
+                    self.builder.start_node(MaterializationAdapter.into());
+                    self.bump();
+                    self.skip_ws();
+                    match self.error_until(&[TokenKind::Assign]) {
+                        None => {
+                            self.errors.push("expected '= <adapter>' after adapter specification in custom materialization, but found end of context".into());
+                            self.builder.finish_node();
+                            break;
+                        }
+                        Some(TokenKind::Assign) => {
+                            // Deviates from dbt source because the way it's used
+                            // _sorta_ implies Const string node.
+                            // https://github.com/dbt-labs/dbt-core/blob/e943b9fc842535e958ef4fd0b8703adc91556bc6/core/dbt/clients/jinja.py#L358
+                            self.bump();
+                            self.skip_ws();
+                            match self.current() {
+                                Some(TokenKind::StringLiteral) => {
+                                    self.parse_string_literal();
+                                }
+                                kind => {
+                                    self.errors.push(format!(
+                                        "expected string literal specifying adapter, but found {:?}",
+                                        kind
+                                    ));
+                                    self.builder.finish_node();
+                                    break;
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                    self.builder.finish_node();
+                }
+                Some(t) => {
+                    let tok = t.clone();
+                    self.errors.push(format!("expected either \"default\" or \"adapter=<adapter>\" for custom materialization but found {:?}", tok));
+                    break;
+                }
+            }
+        }
+    }
+
+    fn parse_endtag(
+        &mut self,
+        endtag: &'static str,
+        kind: SyntaxKind,
+        tags_to_end: &[Tag],
+    ) -> bool {
+        if self.empty_tag_stack_until(tags_to_end) {
+            self.tag_stack.pop_back();
+            self.builder.start_node(kind.into());
+            self.bump(); // '{%'
+            self.skip_ws();
+            self.bump(); // 'endfor'
+            true
+        } else {
+            self.errors
+                .push(format!("found unmatched \"{}\" statement", endtag));
+            self.builder.start_node(StmtUnknown.into());
+            self.bump();
+            self.skip_ws();
+            false
+        }
+    }
+
     /// Parses a `{% %}` statement
     ///
     /// The lexer provides us the guarantee that these are balanced, and that
@@ -329,24 +622,31 @@ impl Parser {
                     self.parse_for();
                 }
                 "endfor" => {
-                    // find the top-most for-tag
-                    if self.empty_tag_stack_until(&[Tag::For, Tag::ForElse]) {
+                    finished_block = self.parse_endtag("endfor", ForEnd, &[Tag::For, Tag::ForElse]);
+                }
+                "if" => {
+                    self.tag_stack.push_back(Tag::If);
+                    self.parse_if();
+                }
+                "elif" => {
+                    if self.empty_tag_stack_until(&[Tag::If, Tag::Elif]) {
                         self.tag_stack.pop_back();
-                        finished_block = true;
-                        self.builder.start_node(ForEnd.into());
-                        self.bump(); // '{%'
-                        self.skip_ws();
-                        self.bump(); // 'endfor'
+                        self.tag_stack.push_back(Tag::Elif);
+                        self.parse_elif();
                     } else {
                         self.errors
-                            .push("found unmatched \"endfor\" statement".into());
+                            .push("found unmatched \"elif\" statement".into());
                         self.builder.start_node(StmtUnknown.into());
                         self.bump();
                         self.skip_ws();
                     }
                 }
+                "endif" => {
+                    finished_block =
+                        self.parse_endtag("endif", IfEnd, &[Tag::If, Tag::Elif, Tag::IfElse]);
+                }
                 "else" => {
-                    if self.empty_tag_stack_until(&[Tag::For, Tag::If]) {
+                    if self.empty_tag_stack_until(&[Tag::For, Tag::If, Tag::Elif]) {
                         let last_tag = self.tag_stack.pop_back().unwrap();
                         match last_tag {
                             Tag::For => {
@@ -356,8 +656,12 @@ impl Parser {
                                 self.skip_ws();
                                 self.bump(); // 'else'
                             }
-                            Tag::If => {
-                                todo!()
+                            Tag::If | Tag::Elif => {
+                                self.tag_stack.push_back(Tag::IfElse);
+                                self.builder.start_node(IfElse.into());
+                                self.bump(); // '{%'
+                                self.skip_ws();
+                                self.bump(); // 'else'
                             }
                             _ => unreachable!(),
                         }
@@ -369,31 +673,55 @@ impl Parser {
                         self.skip_ws();
                     }
                 }
-                "if" => todo!(),
-                "endif" => todo!(),
-                "block" => todo!(),
-                "extends" => todo!(),
-                "print" => todo!(),
-                "include" => todo!(),
-                "from" => todo!(),
-                "import" => todo!(),
-                "set" => todo!(),
-                "with" => todo!(),
-                "autoescape" => todo!(),
-                "call" => todo!(),
-                "filter" => todo!(),
-                "do" => todo!(),
+                "set" => {
+                    if self.parse_set() {
+                        self.tag_stack.push_back(Tag::Set);
+                    }
+                }
+                "endset" => {
+                    finished_block = self.parse_endtag("endset", AssignBlockEnd, &[Tag::Set]);
+                }
+                "call" => {
+                    self.tag_stack.push_back(Tag::Call);
+                    self.parse_call_block();
+                }
+                "endcall" => {
+                    finished_block = self.parse_endtag("endcall", CallBlockEnd, &[Tag::Call]);
+                }
+                "filter" => {
+                    self.tag_stack.push_back(Tag::Filter);
+                    self.parse_filter_block();
+                }
+                "endfilter" => {
+                    finished_block = self.parse_endtag("endfilter", FilterBlockEnd, &[Tag::Filter]);
+                }
+                "do" => {
+                    self.parse_do();
+                }
 
                 // these statements must be root-level blocks, so let's
                 // just empty the tag stack until we're back at the
                 // root-level
+                // ("macro" is only root-level in dbt)
                 "macro" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
-                    todo!();
+                    self.tag_stack.push_back(Tag::Macro);
+                    self.parse_macro();
+                }
+                "endmacro" => {
+                    finished_block = self.parse_endtag("endmacro", MacroBlockEnd, &[Tag::Macro]);
                 }
                 "materialization" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
-                    todo!();
+                    self.tag_stack.push_back(Tag::Materialization);
+                    self.parse_materialization();
+                }
+                "endmaterialization" => {
+                    finished_block = self.parse_endtag(
+                        "endmaterialization",
+                        MaterializationBlockEnd,
+                        &[Tag::Materialization],
+                    );
                 }
                 "test" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
@@ -402,6 +730,21 @@ impl Parser {
                 "docs" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
                     todo!();
+                }
+
+                // Just don't handle these tags because I don't see them being
+                // used much in a dbt project.
+                // (Checked by searching the GitLab dbt project)
+                ignored_tag @ ("block" | "endblock" | "extends" | "include" | "import" | "from"
+                | "with" | "endwith" | "autoescape" | "endautoescape") => {
+                    self.builder.start_node(StmtUnknown.into());
+                    self.bump();
+                    self.skip_ws();
+                    self.bump_error();
+                    self.errors.push(format!(
+                        "not parsing tag {:?}; currently unsupported",
+                        ignored_tag
+                    ));
                 }
                 unknown_tag => {
                     self.builder.start_node(StmtUnknown.into());
@@ -550,6 +893,23 @@ impl Parser {
         self.builder.finish_node();
     }
 
+    fn parse_string_literal(&mut self) {
+        if self.current() != Some(TokenKind::StringLiteral) {
+            panic!("parse_string_literal called without StringLiteral token");
+        }
+        self.builder.start_node(ExprConstantString.into());
+        for _ in 0.. {
+            self.skip_ws();
+            match self.current() {
+                Some(TokenKind::StringLiteral) => {
+                    self.bump();
+                }
+                _ => break,
+            }
+        }
+        self.builder.finish_node()
+    }
+
     fn parse_primary(&mut self) {
         self.skip_ws();
         match self.current() {
@@ -564,17 +924,7 @@ impl Parser {
                 }
             }
             Some(TokenKind::StringLiteral) => {
-                self.builder.start_node(ExprConstantString.into());
-                for _ in 0.. {
-                    self.skip_ws();
-                    match self.current() {
-                        Some(TokenKind::StringLiteral) => {
-                            self.bump();
-                        }
-                        _ => break,
-                    }
-                }
-                self.builder.finish_node()
+                self.parse_string_literal();
             }
             Some(TokenKind::IntegerLiteral) => {
                 self.bump();
@@ -893,13 +1243,21 @@ impl Parser {
         }
     }
 
+    /// checkpoint: if the filter expression should wrap around something
+    /// start_inline: if we can go straight to the filter and not deal with '|'
+    ///
+    /// defaults:
+    /// * start_inline: false
     fn parse_filter(&mut self, checkpoint: Option<Checkpoint>, mut start_inline: bool) {
         let filter_checkpoint = match checkpoint {
             Some(c) => c,
             None => self.builder.checkpoint(),
         };
 
-        while start_inline || self.current() == Some(TokenKind::Pipe) {
+        for i in 0.. {
+            if !start_inline && self.current() != Some(TokenKind::Pipe) {
+                break;
+            }
             if !start_inline {
                 // must be a pipe, let's skip it
                 // TODO: figure out if we want pipe in the filter node in the AST
@@ -907,6 +1265,7 @@ impl Parser {
             }
             self.skip_ws();
 
+            self.builder.start_node(ExprFilterName.into());
             self.parse_nested_name();
 
             match self.current() {
@@ -915,6 +1274,7 @@ impl Parser {
                 }
                 _ => (),
             }
+            self.builder.finish_node();
 
             self.builder
                 .start_node_at(filter_checkpoint, ExprFilter.into());
@@ -1003,6 +1363,7 @@ impl Parser {
         }
     }
 
+    /// with_filter: true
     fn parse_unary(&mut self, with_filter: bool) {
         let checkpoint = self.builder.checkpoint();
 
@@ -1652,6 +2013,13 @@ mod tests {
 
     test_case!(test_filter, "{{ foo | filter | filter2 | filt.er3 }}");
 
+    test_case!(test_filter_call, "{{ foo | filter (call) }}");
+
+    test_case!(
+        test_filter_extra_token,
+        "{{ foo | filter token | filter2 }}"
+    );
+
     test_case!(test_filter_bad_nestedname, "{{ foo | filter.3 }}");
 
     test_case!(test_test, "{{ foo is divisibleby 3 is something }}");
@@ -1732,12 +2100,166 @@ mod tests {
         "{% for assign in expr %} blah {% else %} else {% endfor %} {% else %}"
     );
 
+    test_case!(test_if_basic, "{% if true %} blah {% endif %}");
+
+    test_case!(
+        test_if_else,
+        "{% if true %} blah {% else %} uwu {% endif %}"
+    );
+
+    test_case!(
+        test_if_elif,
+        "{% if true %} blah {% elif false %} uwu {% endif %}"
+    );
+
+    test_case!(
+        test_if_multiple_elif,
+        "{% if true %} blah {% elif false %} owo {% elif 1, %} uwu {% endif %}"
+    );
+
+    test_case!(
+        test_if_multiple_elif_else,
+        "{% if true %} 
+        blah 
+        {% elif false %} 
+        owo 
+        {% elif 1, %} 
+        uwu 
+        {% else %} 
+        aya 
+        {% endif %}"
+    );
+
+    test_case!(
+        test_if_funny,
+        "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}"
+    );
+
+    test_case!(test_set_basic, "{% set blah = true %}");
+
+    test_case!(test_set_block, "{% set blah %} uwu {% endset %}");
+
+    test_case!(
+        test_set_block_filter,
+        "{% set blah | filter %} owo {% endset %}"
+    );
+
+    test_case!(
+        test_set_block_multiple_filter,
+        "{% set blah | filter | filter2 %} owo {% endset %}"
+    );
+
+    test_case!(
+        test_set_unmatched_block,
+        "{% set blah = true %} something {% endset %}"
+    );
+
+    test_case!(
+        test_call_block_basic,
+        "{% call statement('some_query', fetch_result=True) %} 
+        something 
+        {% endcall %}"
+    );
+
+    test_case!(
+        test_call_block_with_args,
+        "{% call (user) dump_users (list_of_user) %} 
+        {{ user.realname|e }} 
+        {% endcall %}"
+    );
+
+    test_case!(
+        test_call_block_with_default_args,
+        "{% call (user, def='test') dump_users (list_of_user) %} 
+        {{ def }} 
+        {% endcall %}"
+    );
+
+    test_case!(
+        test_call_block_with_incorrect_args_order,
+        "{% call (def='test', user) dump_users (list_of_user) %} 
+        {{ def }} 
+        {% endcall %}"
+    );
+
+    test_case!(
+        test_filter_block_basic,
+        "{% filter upper %} blah {% endfilter %}"
+    );
+
+    test_case!(
+        test_filter_block_multiple_filters,
+        "{% filter upper | lower | something %} blah {% endfilter %}"
+    );
+
+    test_case!(
+        test_do_log,
+        "{% do log(\"Tags in Project: \" ~ project_tags, info=true) %}"
+    );
+
+    test_case!(test_do_return, "{% do return(tojson(comment_dict)) %}");
+
+    test_case!(test_do_append, "{% do meta_columns.append(column|upper) %}");
+
+    test_case!(
+        test_macro,
+        "{% macro something() %}
+        something
+        {% endmacro %}"
+    );
+
+    test_case!(
+        test_macro_signature,
+        "{% macro something(arg, def=1234, ghi=456) %}
+        something
+        {% endmacro %}"
+    );
+
+    test_case!(
+        test_materialization,
+        "{% materialization something %}
+        something
+        {% endmaterialization %}"
+    );
+
+    test_case!(
+        test_materialization_default,
+        "{% materialization something, default %}
+        something
+        {% endmaterialization %}"
+    );
+
+    test_case!(
+        test_materialization_adapter,
+        "{% materialization something, adapter = 'uwu' 'owo' %}
+        something
+        {% endmaterialization %}"
+    );
+
+    test_case!(
+        test_materialization_multiple,
+        "{% materialization something, adapter = 'owo', adapter='uwu' %}
+        something
+        {% endmaterialization %}"
+    );
+
+    test_case!(
+        test_materialization_multiple_default,
+        "{% materialization something, default, adapter='uwu', default %}
+        something
+        {% endmaterialization %}"
+    );
+
+    test_case!(
+        test_materialization_extra_end,
+        "{% materialization something, adapter = 'owo', adapter='uwu' blah %}
+        something
+        {% endmaterialization %}"
+    );
+
     // fuzz-generated tests
 
     test_case!(test_variable_dict_dict, "{{{{");
 
     test_case!(test_variable_dict_dict_paren, "{{{{)");
-
-    // "{% if 1 in [1,2] in [[1, 2], None] %} something {% endif %}",
-    // "{% set else = True %}{{ 000 if 111 if 222 if else else 333"
 }

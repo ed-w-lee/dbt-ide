@@ -85,6 +85,12 @@ statements = [
     "assign",
     # assigns a multi-line block to a target
     "assign block",
+    # (dbt-specific): custom materialization
+    "materialization",
+    # (dbt-specific): documentation
+    "docs",
+    # (dbt-specific): generic tests
+    "test",
     # bad tag or something
     "unknown",
 ]
@@ -105,6 +111,8 @@ expressions = [
     "ternary",
     # transform expression
     "filter",
+    # the expression that gets the actual filter to use
+    "filter name",
     # transform expression for a test
     "test",
     # call an expression
@@ -177,4 +185,27 @@ composites = [
     "for start",
     "for else",
     "for end",
+    "if start",
+    "if elif",
+    "if else",
+    "if end",
+    "assign block start",
+    "assign block end",
+    "call block start",
+    "call block end",
+    "signature",
+    "signature arg",
+    "signature default arg",
+    "filter block start",
+    "filter block end",
+    "macro block start",
+    "macro block end",
+    "materialization block start",
+    "materialization block end",
+    "materialization default",
+    "materialization adapter",
+    "test block start",
+    "test block end",
+    "docs block start",
+    "docs block end",
 ]
