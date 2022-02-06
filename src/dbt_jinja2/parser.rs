@@ -53,6 +53,7 @@ enum Tag {
     Materialization, // custom materializations
     Test,            // generic tests
     Docs,            // markdown docs
+    Snapshot,        // snapshot
 
     // Assume these aren't used, because I'm lazy :eyes:
     With,
@@ -702,7 +703,10 @@ impl Parser {
                 // these statements must be root-level blocks, so let's
                 // just empty the tag stack until we're back at the
                 // root-level
-                // ("macro" is only root-level in dbt)
+                // ("macro" is only top-level in dbt)
+                // they are validated (somewhat) in https://github.com/dbt-labs/dbt-core/blob/2d0b975b6c2023cde219f0a045709a1fa5c6c840/core/dbt/clients/_jinja_blocks.py#L321
+                // the list of allowed top-level blocks does change dependent on
+                // context, but we can deal with that outside of the parser
                 "macro" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
                     self.tag_stack.push_back(Tag::Macro);
@@ -731,32 +735,37 @@ impl Parser {
                     self.empty_tag_stack_until(&[Tag::Root]);
                     todo!();
                 }
-
-                // Just don't handle these tags because I don't see them being
-                // used much in a dbt project.
-                // (Checked by searching the GitLab dbt project)
-                ignored_tag @ ("block" | "endblock" | "extends" | "include" | "import" | "from"
-                | "with" | "endwith" | "autoescape" | "endautoescape") => {
-                    self.builder.start_node(StmtUnknown.into());
-                    self.bump();
-                    self.skip_ws();
-                    self.bump_error();
-                    self.errors.push(format!(
-                        "not parsing tag {:?}; currently unsupported",
-                        ignored_tag
-                    ));
-                }
                 unknown_tag => {
                     self.builder.start_node(StmtUnknown.into());
                     self.bump();
-                    self.skip_ws();
-                    self.bump_error();
-                    self.errors
-                        .push(format!("found unknown tag {:?}", unknown_tag));
+                    match unknown_tag {
+                        // Just don't handle these tags because I don't see them being
+                        // used much in a dbt project.
+                        // (Checked by searching the GitLab dbt project)
+                        ignored_tag @ ("block" | "endblock" | "extends" | "include" | "import"
+                        | "from" | "with" | "endwith" | "autoescape"
+                        | "endautoescape") => {
+                            self.errors.push(format!(
+                                "not parsing tag {:?}; currently unsupported",
+                                ignored_tag
+                            ));
+                        }
+                        "raw" => {
+                            self.errors.push("raw tag can't have any arguments".into());
+                        }
+                        "endraw" => {
+                            self.errors.push("found unmatched endraw tag".into());
+                        }
+                        _ => {
+                            self.errors
+                                .push(format!("found unknown tag {:?}", unknown_tag));
+                        }
+                    }
                 }
             }
         }
         self.skip_ws();
+        // colon allowed for python compatibility (like why?)
         match self.error_until(&[TokenKind::Colon, TokenKind::BlockEnd]) {
             None => self
                 .errors
@@ -2255,6 +2264,13 @@ mod tests {
         "{% materialization something, adapter = 'owo', adapter='uwu' blah %}
         something
         {% endmaterialization %}"
+    );
+
+    test_case!(
+        test_raw_extra,
+        "{% raw something : %}
+        something
+        {% endraw %}"
     );
 
     // fuzz-generated tests
