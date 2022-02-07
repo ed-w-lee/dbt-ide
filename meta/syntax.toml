@@ -91,6 +91,8 @@ statements = [
     "docs",
     # (dbt-specific): generic tests
     "test",
+    # (dbt-specific): snapshots
+    "snapshot",
     # bad tag or something
     "unknown",
 ]
@@ -208,4 +210,6 @@ composites = [
     "test block end",
     "docs block start",
     "docs block end",
+    "snapshot block start",
+    "snapshot block end",
 ]

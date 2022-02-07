@@ -471,7 +471,7 @@ impl Parser {
         }
     }
 
-    fn parse_materialization(&mut self) {
+    fn parse_dbt_materialization(&mut self) {
         self.builder.start_node(StmtMaterialization.into());
         self.builder.start_node(MaterializationBlockStart.into());
         self.bump();
@@ -547,6 +547,42 @@ impl Parser {
                 }
             }
         }
+    }
+
+    fn parse_dbt_test(&mut self) {
+        self.builder.start_node(StmtTest.into());
+        self.builder.start_node(TestBlockStart.into());
+        self.bump();
+        self.skip_ws();
+        self.bump(); // 'test'
+
+        self.skip_ws();
+        self.parse_assign_target(AssignTargetNameMode::NameOnly);
+
+        self.skip_ws();
+        self.parse_signature();
+    }
+
+    fn parse_dbt_docs(&mut self) {
+        self.builder.start_node(StmtDocs.into());
+        self.builder.start_node(DocsBlockStart.into());
+        self.bump();
+        self.skip_ws();
+        self.bump(); // 'docs'
+
+        self.skip_ws();
+        self.parse_assign_target(AssignTargetNameMode::NameOnly);
+    }
+
+    fn parse_dbt_snapshot(&mut self) {
+        self.builder.start_node(StmtSnapshot.into());
+        self.builder.start_node(SnapshotBlockStart.into());
+        self.bump();
+        self.skip_ws();
+        self.bump(); // 'snapshot'
+
+        self.skip_ws();
+        self.parse_assign_target(AssignTargetNameMode::NameOnly);
     }
 
     fn parse_endtag(
@@ -700,13 +736,17 @@ impl Parser {
                     self.parse_do();
                 }
 
-                // these statements must be root-level blocks, so let's
-                // just empty the tag stack until we're back at the
-                // root-level
+                // these statements must be root-level blocks, so let's just
+                // empty the tag stack until we're back at the root-level
                 // ("macro" is only top-level in dbt)
+                //
                 // they are validated (somewhat) in https://github.com/dbt-labs/dbt-core/blob/2d0b975b6c2023cde219f0a045709a1fa5c6c840/core/dbt/clients/_jinja_blocks.py#L321
                 // the list of allowed top-level blocks does change dependent on
                 // context, but we can deal with that outside of the parser
+                //
+                // they also have their own lexing/parsing logic for identifying
+                // top-level blocks. I'm guessing logic should be relatively
+                // similar (outside of their name regex being pretty pared down)
                 "macro" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
                     self.tag_stack.push_back(Tag::Macro);
@@ -718,7 +758,7 @@ impl Parser {
                 "materialization" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
                     self.tag_stack.push_back(Tag::Materialization);
-                    self.parse_materialization();
+                    self.parse_dbt_materialization();
                 }
                 "endmaterialization" => {
                     finished_block = self.parse_endtag(
@@ -729,11 +769,28 @@ impl Parser {
                 }
                 "test" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
-                    todo!();
+                    self.tag_stack.push_back(Tag::Test);
+                    self.parse_dbt_test();
+                }
+                "endtest" => {
+                    finished_block = self.parse_endtag("endtest", TestBlockEnd, &[Tag::Test]);
                 }
                 "docs" => {
                     self.empty_tag_stack_until(&[Tag::Root]);
-                    todo!();
+                    self.tag_stack.push_back(Tag::Docs);
+                    self.parse_dbt_docs();
+                }
+                "enddocs" => {
+                    finished_block = self.parse_endtag("enddocs", DocsBlockEnd, &[Tag::Docs]);
+                }
+                "snapshot" => {
+                    self.empty_tag_stack_until(&[Tag::Root]);
+                    self.tag_stack.push_back(Tag::Snapshot);
+                    self.parse_dbt_snapshot();
+                }
+                "endsnapshot" => {
+                    finished_block =
+                        self.parse_endtag("endsnapshot", SnapshotBlockEnd, &[Tag::Snapshot]);
                 }
                 unknown_tag => {
                     self.builder.start_node(StmtUnknown.into());
@@ -1978,6 +2035,7 @@ mod tests {
 
     fn test_parse(test_case: ParseTestCase) {
         let tokens = tokenize(test_case.input);
+        println!("{:?}", tokens);
         let p = parse(tokens);
         let node = p.syntax();
         print_node(node, 0);
@@ -2267,6 +2325,33 @@ mod tests {
     );
 
     test_case!(
+        test_dbt_test_basic,
+        "{% test not_null(model, column_name) %}
+        select * from {{ model }} where {{ column_name }} is null
+        {% endtest %}"
+    );
+
+    test_case!(
+        test_dbt_docs_basic,
+        "{% docs table_events %}
+        This table contains clickstream events from the marketing website.
+        {% enddocs %}"
+    );
+
+    test_case!(
+        test_dbt_snapshot_basic,
+        "{% snapshot orders_snapshot %}
+        {{
+            config(
+                target_database='analytics',      
+                target_schema='snapshots',
+            )
+        }}
+        select * from {{ source('jaffle_shop', 'orders') }}
+        {% endsnapshot %}"
+    );
+
+    test_case!(
         test_raw_extra,
         "{% raw something : %}
         something
@@ -2278,4 +2363,6 @@ mod tests {
     test_case!(test_variable_dict_dict, "{{{{");
 
     test_case!(test_variable_dict_dict_paren, "{{{{)");
+
+    test_case!(test_equal_variable, "={{,");
 }
