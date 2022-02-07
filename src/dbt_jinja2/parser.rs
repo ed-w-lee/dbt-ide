@@ -560,7 +560,17 @@ impl Parser {
         self.parse_assign_target(AssignTargetNameMode::NameOnly);
 
         self.skip_ws();
-        self.parse_signature();
+        match self.error_until(&[TokenKind::LeftParen]) {
+            None => {
+                self.errors.push(
+                    "expected function signature after macro name but found end of context".into(),
+                );
+            }
+            Some(TokenKind::LeftParen) => {
+                self.parse_signature();
+            }
+            _ => unreachable!(),
+        }
     }
 
     fn parse_dbt_docs(&mut self) {
@@ -1669,30 +1679,25 @@ impl Parser {
     fn parse_ternary(&mut self) {
         let checkpoint = self.builder.checkpoint();
 
-        let checkpoint2 = self.builder.checkpoint();
+        // 1st expression (if conditional = true)
         self.parse_or();
         for _ in 0.. {
             self.skip_ws();
             match self.current_tok() {
                 Some(t) if t.is_name("if") => {
-                    self.builder.start_node_at(checkpoint2, TernaryFirst.into());
-                    self.builder.finish_node();
-
                     self.builder.start_node_at(checkpoint, ExprTernary.into());
                     self.register(NameOperatorIf);
 
-                    self.builder.start_node(TernaryCondition.into());
+                    // conditional
                     self.parse_or();
-                    self.builder.finish_node();
 
                     self.skip_ws();
                     match self.current_tok() {
                         Some(t) if t.is_name("else") => {
                             self.register(NameOperatorElse);
 
-                            self.builder.start_node(TernarySecond.into());
+                            // 2nd expression (if conditional = false)
                             self.parse_ternary();
-                            self.builder.finish_node();
                         }
                         _ => (),
                     }
@@ -1730,12 +1735,11 @@ impl Parser {
         loop {
             self.skip_ws();
             // if we should wrap the expression as a tuple element or not
-            let checkpoint2 = self.builder.checkpoint();
             match self.current_tok() {
                 None => {
                     self.errors
                         .push("unexpected EOF while parsing possible tuple".into());
-                    return;
+                    break;
                 }
                 Some(t) if Self::is_tuple_end(t, extra_end_rules) => {
                     break;
@@ -1749,27 +1753,19 @@ impl Parser {
             count += 1;
 
             self.skip_ws();
-            match self.current() {
-                Some(TokenKind::Comma) => {
-                    self.builder.start_node_at(checkpoint2, TupleElement.into());
-                    self.builder.finish_node();
-                    if count == 1 {
-                        is_tuple = true;
-                        self.builder.start_node_at(checkpoint, ExprTuple.into());
-                    }
-                    self.register(TupleSeparator.into());
-                }
-                _ => {
-                    if is_tuple {
-                        self.builder.start_node_at(checkpoint2, TupleElement.into());
-                        self.builder.finish_node();
-                    }
-                    break;
-                }
+            if self.current() != Some(TokenKind::Comma) {
+                break;
             }
+            if count == 1 {
+                is_tuple = true;
+                self.builder.start_node_at(checkpoint, ExprTuple.into());
+            }
+            self.bump();
         }
 
-        if !is_tuple {
+        if is_tuple {
+            self.builder.finish_node();
+        } else {
             match count {
                 0 => {
                     if !explicit_parentheses {
@@ -1780,11 +1776,11 @@ impl Parser {
                     self.skip_ws();
                     self.builder.finish_node();
                 }
-                1 => return,
+                1 => {
+                    return;
+                }
                 _ => unreachable!(),
             }
-        } else {
-            self.builder.finish_node();
         }
     }
 
@@ -2365,4 +2361,10 @@ mod tests {
     test_case!(test_variable_dict_dict_paren, "{{{{)");
 
     test_case!(test_equal_variable, "={{,");
+
+    test_case!(test_variable_tuple_paren, "{{()}}");
+
+    test_case!(test_variable_tuple_close, "={{)");
+
+    test_case!(test_dbt_test_incomplete, "{% test");
 }
