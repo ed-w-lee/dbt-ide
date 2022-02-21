@@ -28,6 +28,7 @@ In vague order of priority.
   - [ ] jump-to-definition
     - [ ] models
     - [ ] macros
+    - [ ] in-file variables
     - [ ] sources
     - [ ] dbt built-ins
     - [ ] Jinja built-ins

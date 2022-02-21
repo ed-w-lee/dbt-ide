@@ -16,7 +16,7 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum Lang {}
+pub enum Lang {}
 
 impl rowan::Language for Lang {
     type Kind = SyntaxKind;
@@ -1330,7 +1330,7 @@ impl Parser {
             None => self.builder.checkpoint(),
         };
 
-        for i in 0.. {
+        for _ in 0.. {
             if !start_inline && self.current() != Some(TokenKind::Pipe) {
                 break;
             }
@@ -1997,18 +1997,18 @@ pub fn parse(tokens: Vec<Token>) -> Parse {
     .parse()
 }
 
+type SyntaxNode = rowan::SyntaxNode<Lang>;
+
+impl Parse {
+    pub fn syntax(&self) -> SyntaxNode {
+        SyntaxNode::new_root(self.green_node.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse, Lang, Parse};
+    use super::{parse, SyntaxNode};
     use crate::dbt_jinja2::lexer::tokenize;
-
-    type SyntaxNode = rowan::SyntaxNode<Lang>;
-
-    impl Parse {
-        fn syntax(&self) -> SyntaxNode {
-            SyntaxNode::new_root(self.green_node.clone())
-        }
-    }
 
     fn print_node(node: SyntaxNode, indent: usize) {
         println!("{:>indent$}{node:?}", "", node = node, indent = 2 * indent);
@@ -2125,6 +2125,8 @@ mod tests {
         "{{ call(arg1 a, **kwargs b, *args c, kwarg d=kw e, arg2 f, arg3 g) "
     );
 
+    test_case!(test_call_with_namespace, "{{ nested.call.call2(something) ");
+
     test_case!(test_block, "{% %}");
 
     test_case!(test_unknown_tag, "{% unk %}");
@@ -2201,6 +2203,11 @@ mod tests {
     test_case!(test_set_basic, "{% set blah = true %}");
 
     test_case!(test_set_block, "{% set blah %} uwu {% endset %}");
+
+    test_case!(
+        test_set_namespace_block,
+        "{% set blah.something %} uwu {% endset %}"
+    );
 
     test_case!(
         test_set_block_filter,
