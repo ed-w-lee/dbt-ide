@@ -1,6 +1,6 @@
-use lspower::{
+use tower_lsp::{
     jsonrpc::Result,
-    lsp::{
+    lsp_types::{
         InitializeParams, InitializeResult, ServerCapabilities, TextDocumentSyncCapability,
         TextDocumentSyncKind,
     },
@@ -12,7 +12,7 @@ struct Backend {
     client: Client,
 }
 
-#[lspower::async_trait]
+#[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {

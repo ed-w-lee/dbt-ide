@@ -1,4 +1,4 @@
-use lspower::lsp::{Location, Range};
+use tower_lsp::lsp_types::{Location, Range};
 
 /**
  * Inter-file metadata

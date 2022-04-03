@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::ops::Bound::{Excluded, Included};
 
-use lspower::lsp::Position;
+use tower_lsp::lsp_types::Position;
 
 use crate::model::{Macro, Materialization, ModelRef, Object};
 
