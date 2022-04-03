@@ -2008,7 +2008,7 @@ impl Parse {
 #[cfg(test)]
 mod tests {
     use super::{parse, SyntaxNode};
-    use crate::dbt_jinja2::lexer::tokenize;
+    use crate::lexer::tokenize;
 
     fn print_node(node: SyntaxNode, indent: usize) {
         println!("{:>indent$}{node:?}", "", node = node, indent = 2 * indent);
