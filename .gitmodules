@@ -1,0 +1,3 @@
+[submodule "examples/analytics"]
+	path = examples/analytics
+	url = https://gitlab.com/gitlab-data/analytics.git

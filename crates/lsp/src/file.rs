@@ -3,9 +3,7 @@ use std::ops::Bound::{Excluded, Included};
 
 use lspower::lsp::Position;
 
-use crate::dbt_jinja2_lsp::model::{Macro, Materialization, ModelRef};
-
-use super::model::Object;
+use crate::model::{Macro, Materialization, ModelRef, Object};
 
 #[derive(Debug)]
 struct PositionFinder {

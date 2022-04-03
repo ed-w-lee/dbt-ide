@@ -10,7 +10,6 @@ lazy_static = "1.4.0"
 fancy-regex = "0.7.1"
 rowan = "0.15.2"
 defer-lite = "1.0.0"
-lspower = "1.5.0"
 
 [build-dependencies]
 toml = "0.5.8"
