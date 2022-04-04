@@ -1,8 +1,10 @@
 use tower_lsp::{
     jsonrpc::Result,
     lsp_types::{
-        DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializeResult,
-        MessageType, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+        CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams,
+        CompletionResponse, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+        InitializeParams, InitializeResult, MessageType, ServerCapabilities,
+        TextDocumentSyncCapability, TextDocumentSyncKind,
     },
     Client, LanguageServer,
 };
@@ -21,6 +23,12 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                completion_provider: Some(CompletionOptions {
+                    resolve_provider: Some(false),
+                    trigger_characters: Some(vec!["a".to_string()]),
+                    work_done_progress_options: Default::default(),
+                    all_commit_characters: None,
+                }),
                 ..ServerCapabilities::default()
             },
         })
@@ -40,5 +48,20 @@ impl LanguageServer for Backend {
         self.client
             .log_message(MessageType::INFO, format!("did_change: {:?}", params))
             .await;
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        Ok(Some(CompletionResponse::Array(vec![
+            CompletionItem {
+                label: "Something".to_string(),
+                kind: Some(CompletionItemKind::TEXT),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "dbt-ide".to_string(),
+                kind: Some(CompletionItemKind::TEXT),
+                ..Default::default()
+            },
+        ])))
     }
 }

@@ -68,7 +68,8 @@ In vague order of priority.
   - [ ] warnings / lints (replace-with-ref)
   - [ ] auto-suggest columns / tables
 
-## Inspiration
+## Inspiration / Copied code from
 - [sqls](https://github.com/lighttiger2505/sqls) - golang-based SQL language server
 - [rust-analyzer](https://github.com/rust-analyzer/rust-analyzer) - Rust language server
 - [PopSQL](https://popsql.com/) - SQL editor with support for Liquid templates (and a beta dbt integration :eyes:)
+- [tower-lsp-boilerplate](https://github.com/IWANABETHATGUY/tower-lsp-boilerplate/) - Boilerplate for Rust-based LSP servers
