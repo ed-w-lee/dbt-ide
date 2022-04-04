@@ -40,13 +40,13 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         self.client
-            .log_message(MessageType::INFO, format!("did_open: {:?}", params))
+            .log_message(MessageType::WARNING, format!("did_open: {:?}", params))
             .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         self.client
-            .log_message(MessageType::INFO, format!("did_change: {:?}", params))
+            .log_message(MessageType::WARNING, format!("did_change: {:?}", params))
             .await;
     }
 

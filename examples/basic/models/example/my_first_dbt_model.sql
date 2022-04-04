@@ -7,13 +7,6 @@
     Try changing "table" to "view" below
 */
 
-{{ config(materialized='table', meta={
-    'test': 'something',
-}, substitute='abcd', tags=['1', '2']) }}
-{{ config(materialized='new_value', meta={
-    'test2': 'something else'
-}, substitute='efgh', tags=['3', '4']) }}
-
 with source_data as (
 
     select 1 as id
@@ -23,8 +16,17 @@ with source_data as (
 )
 
 select *
+{{ config(materialized='table', meta={
+    'test': 'something',
+}, substitute='abcd', tags=['1', '2']) }}
+{{ config(materialized='new_value', meta={
+    'test2': 'something else'
+}, substitute='efgh', tags=['3', '4']) }}
+
 from source_data
 
+
+{{ some_macro() }}
 /*
     Uncomment the line below to remove records with null `id` values
 */

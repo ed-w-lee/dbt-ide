@@ -1,6 +1,6 @@
-clean: 
+down: 
 	docker-compose stop && docker-compose rm -f
 
-start:
+up:
 	docker-compose up -d
 
