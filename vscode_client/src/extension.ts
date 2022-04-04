@@ -43,7 +43,7 @@ let client: LanguageClient;
 export async function activate(context: ExtensionContext) {
 
     const traceOutputChannel = window.createOutputChannel("dbt Language Server trace");
-    const command = process.env.SERVER_PATH || "dbt-lsp";
+    const command = process.env.SERVER_PATH || "dbt-language-server";
     const run: Executable = {
         command,
         options: {

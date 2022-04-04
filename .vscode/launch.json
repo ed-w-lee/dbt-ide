@@ -18,7 +18,7 @@
         "script": "watch"
       },
       "env": {
-        "SERVER_PATH": "${workspaceRoot}/target/debug/dbt-lsp"
+        "SERVER_PATH": "${workspaceRoot}/target/debug/dbt-language-server"
       }
     },
   ],
