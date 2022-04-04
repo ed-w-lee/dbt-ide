@@ -1,0 +1,18 @@
+{
+  "name": "dbt-language-client",
+  "version": "0.1.0",
+  "description": "VSCode client for dbt language server",
+  "main": "extensions.ts",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.65.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "8.0.0-next.12"
+  },
+  "devDependencies": {
+    "@types/node": "^17.0.18",
+    "vscode-test": "^1.3.0",
+    "@types/vscode": "~1.65.0"
+  }
+}

@@ -1,15 +1,15 @@
 use tower_lsp::{
     jsonrpc::Result,
     lsp_types::{
-        InitializeParams, InitializeResult, ServerCapabilities, TextDocumentSyncCapability,
-        TextDocumentSyncKind,
+        DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializeResult,
+        MessageType, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
     },
     Client, LanguageServer,
 };
 
 #[derive(Debug)]
-struct Backend {
-    client: Client,
+pub struct Backend {
+    pub client: Client,
 }
 
 #[tower_lsp::async_trait]
@@ -28,5 +28,17 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        self.client
+            .log_message(MessageType::INFO, format!("did_open: {:?}", params))
+            .await;
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        self.client
+            .log_message(MessageType::INFO, format!("did_change: {:?}", params))
+            .await;
     }
 }
