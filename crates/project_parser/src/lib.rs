@@ -1,3 +1,2 @@
-pub fn main() {
-    println!("Hello, world!");
-}
+pub mod project;
+mod spec;

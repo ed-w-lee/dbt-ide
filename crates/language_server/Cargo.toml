@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+dbt-jinja-parser = { path = "../jinja_parser" }
+dbt-project-parser = { path = "../project_parser" }
 tower-lsp = { version = "0.16.0" }
 tokio = { version = "1.17.0", features = ["full"] }
-
-[dependencies.dbt-jinja-parser]
-path = "../jinja_parser"
+walkdir = "2.3.2"

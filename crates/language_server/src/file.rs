@@ -55,7 +55,8 @@ impl PositionFinder {
 }
 
 /// This represents the metadata we need to track if a dbt jinja file is open
-struct SqlFileFull {
+#[derive(Debug)]
+pub struct SqlFileFull {
     file_reduced: SqlFileReduced,
     position_finder: PositionFinder,
     objects: Vec<Object>,
@@ -63,8 +64,15 @@ struct SqlFileFull {
 
 /// This represents the metadata we need to track regardless of if a dbt jinja
 /// file is open or not
-struct SqlFileReduced {
+#[derive(Debug)]
+pub struct SqlFileReduced {
     macros: Vec<Macro>,
     materializations: Vec<Materialization>,
     model: Option<ModelRef>,
+}
+
+#[derive(Debug)]
+pub enum SqlFile {
+    Full(SqlFileFull),
+    Reduced(SqlFileReduced),
 }
