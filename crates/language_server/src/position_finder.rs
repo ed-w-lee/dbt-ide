@@ -5,26 +5,33 @@ use tower_lsp::lsp_types::Position;
 
 #[derive(Debug)]
 pub struct PositionFinder {
-    /// List of the positions of newlines
-    newline_index: BTreeMap<u32, u32>,
+    /// offset -> newline
+    offset_to_newline: BTreeMap<u32, u32>,
+    /// newline -> offset
+    newline_to_offset: Vec<u32>,
 }
 
 impl PositionFinder {
     pub fn from_text(text: &str) -> Self {
-        let mut newline_index = BTreeMap::new();
+        let mut offset_to_newline = BTreeMap::new();
+        let mut newline_to_offset = Vec::new();
         text.char_indices().fold(0, |acc, (pos, char)| match char {
             '\n' | '\r' => {
-                newline_index.insert(pos as u32, acc);
+                offset_to_newline.insert(pos as u32, acc);
+                newline_to_offset.push(pos as u32);
                 acc + 1
             }
             _ => acc,
         });
-        Self { newline_index }
+        Self {
+            offset_to_newline,
+            newline_to_offset,
+        }
     }
 
     pub fn get_lineno(&self, idx: u32) -> u32 {
         match self
-            .newline_index
+            .offset_to_newline
             .range((Included(&0), Excluded(&idx)))
             .last()
         {
@@ -35,7 +42,7 @@ impl PositionFinder {
 
     pub fn get_position(&self, idx: u32) -> Position {
         match self
-            .newline_index
+            .offset_to_newline
             .range((Included(&0), Excluded(&idx)))
             .last()
         {
@@ -47,6 +54,13 @@ impl PositionFinder {
                 line: 0,
                 character: idx,
             },
+        }
+    }
+
+    pub fn get_offset(&self, position: Position) -> u32 {
+        match self.newline_to_offset.get(position.line as usize) {
+            Some(line_offset) => line_offset + position.character,
+            None => todo!(),
         }
     }
 }

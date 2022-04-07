@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use dashmap::DashMap;
+use dbt_jinja_parser::parser::SyntaxKind;
 use futures::future::{join_all, try_join_all};
 use tokio::sync::RwLock;
 use tower_lsp::{
@@ -76,7 +77,7 @@ impl LanguageServer for Backend {
                 )),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
-                    trigger_characters: None,
+                    trigger_characters: Some(vec!["(".to_string()]),
                     work_done_progress_options: Default::default(),
                     all_commit_characters: None,
                 }),
@@ -253,13 +254,83 @@ impl LanguageServer for Backend {
         &self,
         params: CompletionParams,
     ) -> JsonRpcResult<Option<CompletionResponse>> {
-        let current_uri = params.text_document_position.text_document.uri;
+        let mut completion_items: Vec<_> = self
+            .get_model_names()
+            .into_iter()
+            .map(|name| CompletionItem {
+                label: name,
+                kind: Some(CompletionItemKind::FILE),
+                ..Default::default()
+            })
+            .collect();
 
-        let current_pos = params.text_document_position.position;
-        let file_contents = match read_file(&uri_to_path(&current_uri)?).await {
-            Ok(contents) => contents,
-            Err(e) => return Err(Error::internal_error()),
+        let current_uri = params.text_document_position.text_document.uri;
+        let path = match uri_to_path(&current_uri) {
+            Ok(path) => path,
+            Err(e) => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!(
+                            "couldn't open file with uri={:?} due to {:?}",
+                            current_uri, e
+                        ),
+                    )
+                    .await;
+                return Ok(Some(CompletionResponse::Array(completion_items)));
+            }
         };
+
+        let model_file = &*match self.models.get(&path) {
+            None => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("couldn't find entry for file with path={:?}", path),
+                    )
+                    .await;
+                return Ok(Some(CompletionResponse::Array(completion_items)));
+            }
+            Some(model_file) => model_file,
+        };
+        let offset = model_file
+            .position_finder
+            .get_offset(params.text_document_position.position);
+        let token = model_file
+            .parsed_repr
+            .syntax()
+            .token_at_offset(offset.into());
+        eprintln!("Test {:?}", token);
+        match token {
+            rowan::TokenAtOffset::None => (),
+            rowan::TokenAtOffset::Single(leaf) => {
+                let call_node = leaf
+                    .ancestors()
+                    .find(|ancestor| ancestor.kind() == SyntaxKind::ExprCall);
+                match call_node {
+                    None => (),
+                    Some(call_node) => match call_node
+                        .children()
+                        .find(|child| child.kind() == SyntaxKind::ExprName)
+                    {
+                        None => (),
+                        Some(name_node) => match name_node.last_child_or_token().unwrap() {
+                            rowan::NodeOrToken::Node(_) => unreachable!(),
+                            rowan::NodeOrToken::Token(token) => {
+                                if token.text() == "ref" {
+                                    completion_items.push(CompletionItem {
+                                        label: "WE_IN_REF_NOW".to_string(),
+                                        kind: Some(CompletionItemKind::FILE),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                        },
+                    },
+                }
+            }
+            rowan::TokenAtOffset::Between(_, _) => (),
+        }
 
         // Ok(Some(CompletionResponse::Array(
         //     self.models
@@ -271,6 +342,15 @@ impl LanguageServer for Backend {
         //         })
         //         .collect(),
         // )))
-        todo!()
+        Ok(Some(CompletionResponse::Array(completion_items)))
+    }
+}
+
+impl Backend {
+    fn get_model_names(&self) -> Vec<String> {
+        self.models
+            .iter()
+            .map(|model| model.value().name.clone())
+            .collect()
     }
 }

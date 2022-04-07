@@ -2119,6 +2119,10 @@ mod tests {
 
     test_case!(test_call, "{{ call(1, something) ");
 
+    test_case!(test_call_nest, "{{ call(1, something)(2, 3) ");
+
+    test_case!(test_call_ref, "{{ ref('");
+
     test_case!(
         test_call_arg_ordering,
         "{{ call(arg1, **kwargs, *args, kwarg=kw, arg2, arg3) "
@@ -2378,4 +2382,6 @@ mod tests {
     test_case!(test_variable_tuple_close, "={{)");
 
     test_case!(test_dbt_test_incomplete, "{% test");
+
+    test_case!(test_open_block, "{% ");
 }

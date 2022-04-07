@@ -25,8 +25,7 @@ select *
 
 from source_data
 
-
-{{ some_macro() }}
+{{ ref }}
 
 {% macro test_unique_macro() %}
 hello
