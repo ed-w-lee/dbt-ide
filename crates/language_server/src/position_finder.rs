@@ -14,7 +14,7 @@ pub struct PositionFinder {
 impl PositionFinder {
     pub fn from_text(text: &str) -> Self {
         let mut offset_to_newline = BTreeMap::new();
-        let mut newline_to_offset = Vec::new();
+        let mut newline_to_offset = vec![0];
         text.char_indices().fold(0, |acc, (pos, char)| match char {
             '\n' | '\r' => {
                 offset_to_newline.insert(pos as u32, acc);

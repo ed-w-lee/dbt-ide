@@ -18,7 +18,7 @@ use tower_lsp::{
 use crate::{
     project::DbtProject,
     sql_file::ModelFile,
-    utils::{read_file, uri_to_path},
+    utils::{print_node, read_file, uri_to_path},
 };
 
 type JsonRpcResult<T> = tower_lsp::jsonrpc::Result<T>;
@@ -139,6 +139,7 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        eprintln!("did_change");
         let path = match uri_to_path(&params.text_document.uri) {
             Ok(path) => path,
             Err(e) => {
@@ -183,7 +184,9 @@ impl LanguageServer for Backend {
             }
             Some(m) => m,
         };
-        model_file.value_mut().refresh(file_contents);
+        let model_file = model_file.value_mut();
+        model_file.refresh(file_contents);
+        print_node(model_file.parsed_repr.syntax(), 2);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -296,6 +299,10 @@ impl LanguageServer for Backend {
         let offset = model_file
             .position_finder
             .get_offset(params.text_document_position.position);
+        eprintln!(
+            "position={:?} and offset={:?}",
+            params.text_document_position.position, offset
+        );
         let token = model_file
             .parsed_repr
             .syntax()

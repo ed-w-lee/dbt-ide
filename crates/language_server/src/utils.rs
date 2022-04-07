@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use dbt_jinja_parser::parser::Lang;
 use tokio::fs::read;
 use tower_lsp::{jsonrpc::Error, lsp_types::Url};
 
@@ -23,4 +24,20 @@ pub fn uri_to_path(uri: &Url) -> Result<PathBuf, Error> {
         )),
         Ok(path) => Ok(path),
     }
+}
+
+type SyntaxNode = rowan::SyntaxNode<Lang>;
+pub fn print_node(node: SyntaxNode, indent: usize) {
+    eprintln!("{:>indent$}{node:?}", "", node = node, indent = 2 * indent);
+    node.children_with_tokens().for_each(|child| match child {
+        rowan::NodeOrToken::Node(n) => print_node(n, indent + 1),
+        rowan::NodeOrToken::Token(t) => {
+            eprintln!(
+                "{:>indent$}{node:?}",
+                "",
+                node = t,
+                indent = 2 * (indent + 1)
+            );
+        }
+    })
 }
