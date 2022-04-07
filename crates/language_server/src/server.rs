@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use dashmap::DashMap;
+use futures::future::{join_all, try_join_all};
 use tokio::sync::RwLock;
 use tower_lsp::{
     jsonrpc::Error,
@@ -15,7 +16,7 @@ use tower_lsp::{
 
 use crate::{
     project::DbtProject,
-    sql_file::{ModelFile, ModelFileFull, ModelFileReduced},
+    sql_file::ModelFile,
     utils::{read_file, uri_to_path},
 };
 
@@ -45,22 +46,27 @@ impl LanguageServer for Backend {
             }
             Ok(project) => project,
         };
+
         let found_model_paths = project.get_model_paths();
-        let found_models: Result<Vec<_>, _> = found_model_paths
-            .iter()
-            .map(|model_path| (ModelFileReduced::from_file(&model_path)))
-            .collect();
-        let found_models = match found_models {
-            Ok(models) => found_model_paths
-                .into_iter()
-                .zip(models.into_iter())
-                .map(|(path, file_repr)| (path, ModelFile::Reduced(file_repr))),
+
+        let parsed_models = match try_join_all(
+            found_model_paths
+                .iter()
+                .map(|model_path| ModelFile::from_file_path(model_path)),
+        )
+        .await
+        {
+            Ok(models) => models,
             Err(e) => return Err(Error::parse_error()),
         };
+
         self.models.clear();
-        found_models.for_each(|(p, m)| {
-            self.models.insert(p, m);
-        });
+        found_model_paths
+            .into_iter()
+            .zip(parsed_models.into_iter())
+            .for_each(|(p, m)| {
+                self.models.insert(p, m);
+            });
 
         Ok(InitializeResult {
             server_info: None,
@@ -113,7 +119,7 @@ impl LanguageServer for Backend {
         }
 
         let file_contents = params.text_document.text;
-        let full_model = match ModelFileFull::from_file(&path, &file_contents) {
+        let parsed_model = match ModelFile::from_file(&path, &file_contents) {
             Ok(model) => model,
             Err(e) => {
                 self.client
@@ -128,7 +134,7 @@ impl LanguageServer for Backend {
                 return;
             }
         };
-        self.models.insert(path, ModelFile::Full(full_model));
+        self.models.insert(path, parsed_model);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -176,10 +182,7 @@ impl LanguageServer for Backend {
             }
             Some(m) => m,
         };
-        match model_file.value_mut() {
-            ModelFile::Full(full_model) => full_model.refresh(file_contents),
-            ModelFile::Reduced(_) => unreachable!(),
-        }
+        model_file.value_mut().refresh(file_contents);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -210,12 +213,40 @@ impl LanguageServer for Backend {
                 .await;
         }
 
-        self.models.alter(&path, |_, v| match v {
-            ModelFile::Full(m) => ModelFile::Reduced(m.to_reduced()),
-            // we're supposedly guaranteed that a "did_open" for a given uri
-            // will correspond to a "did_close"
-            ModelFile::Reduced(_) => unreachable!(),
-        });
+        if !path.exists() {
+            self.models.remove(&path);
+            return;
+        }
+        let mut model_file = match self.models.get_mut(&path) {
+            None => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!(
+                            "couldn't find entry for model file with path={:?}",
+                            params.text_document.uri
+                        ),
+                    )
+                    .await;
+                return;
+            }
+            Some(m) => m,
+        };
+        match model_file.value_mut().refresh_with_path(&path).await {
+            Ok(_) => (),
+            Err(e) => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!(
+                            "failed to refresh model file with path={:?} because {:?}",
+                            path, e
+                        ),
+                    )
+                    .await;
+                return;
+            }
+        }
     }
 
     async fn completion(
@@ -223,6 +254,7 @@ impl LanguageServer for Backend {
         params: CompletionParams,
     ) -> JsonRpcResult<Option<CompletionResponse>> {
         let current_uri = params.text_document_position.text_document.uri;
+
         let current_pos = params.text_document_position.position;
         let file_contents = match read_file(&uri_to_path(&current_uri)?).await {
             Ok(contents) => contents,

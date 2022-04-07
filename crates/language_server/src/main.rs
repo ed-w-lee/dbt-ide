@@ -5,6 +5,7 @@ use sql_file::ModelFile;
 use tower_lsp::{LspService, Server};
 
 mod model;
+mod position_finder;
 mod project;
 mod project_spec;
 mod server;
