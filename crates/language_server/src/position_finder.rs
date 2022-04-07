@@ -4,13 +4,13 @@ use std::ops::Bound::{Excluded, Included};
 use tower_lsp::lsp_types::Position;
 
 #[derive(Debug)]
-struct PositionFinder {
+pub struct PositionFinder {
     /// List of the positions of newlines
     newline_index: BTreeMap<u32, u32>,
 }
 
 impl PositionFinder {
-    fn from_text(text: &str) -> Self {
+    pub fn from_text(text: &str) -> Self {
         let mut newline_index = BTreeMap::new();
         text.char_indices().fold(0, |acc, (pos, char)| match char {
             '\n' | '\r' => {
@@ -22,7 +22,7 @@ impl PositionFinder {
         Self { newline_index }
     }
 
-    fn get_lineno(&self, idx: u32) -> u32 {
+    pub fn get_lineno(&self, idx: u32) -> u32 {
         match self
             .newline_index
             .range((Included(&0), Excluded(&idx)))
@@ -33,7 +33,7 @@ impl PositionFinder {
         }
     }
 
-    fn get_position(&self, idx: u32) -> Position {
+    pub fn get_position(&self, idx: u32) -> Position {
         match self
             .newline_index
             .range((Included(&0), Excluded(&idx)))

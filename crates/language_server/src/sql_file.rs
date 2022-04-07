@@ -9,6 +9,7 @@ use tokio::fs::read;
 use tower_lsp::lsp_types::{Location, Position};
 
 use crate::model::{Macro, Materialization, Object};
+use crate::position_finder::PositionFinder;
 use crate::utils::read_file;
 
 /// This represents the metadata we need to track for a dbt model file.
