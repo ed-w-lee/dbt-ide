@@ -1,6 +1,8 @@
-use std::{fs::read, path::Path};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+
+use crate::utils::read_file;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct DbtProjectSpec {
@@ -20,16 +22,8 @@ fn default_macro_paths() -> Vec<String> {
 
 impl DbtProjectSpec {
     // TODO: add better errors
-    pub fn from_file(path: &Path) -> Result<Self, String> {
-        let raw_bytes = read(path);
-        let raw_bytes = {
-            if raw_bytes.is_err() {
-                return Err("bad read".to_string());
-            } else {
-                raw_bytes.unwrap()
-            }
-        };
-        let project = serde_yaml::from_str::<DbtProjectSpec>(&String::from_utf8_lossy(&raw_bytes));
+    pub async fn from_file(path: &Path) -> Result<Self, String> {
+        let project = serde_yaml::from_str::<DbtProjectSpec>(&read_file(path).await?);
         let project = match project {
             Err(e) => return Err(format!("bad yaml parse: {:?}", e)),
             Ok(project) => project,

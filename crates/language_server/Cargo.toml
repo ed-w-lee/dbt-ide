@@ -7,7 +7,10 @@ edition = "2021"
 
 [dependencies]
 dbt-jinja-parser = { path = "../jinja_parser" }
-dbt-project-parser = { path = "../project_parser" }
 tower-lsp = { version = "0.16.0" }
 tokio = { version = "1.17.0", features = ["full"] }
 walkdir = "2.3.2"
+yaml-rust = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.8"
+dashmap = "5.2.0"

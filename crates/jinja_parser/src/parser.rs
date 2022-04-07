@@ -2003,6 +2003,10 @@ impl Parse {
     pub fn syntax(&self) -> SyntaxNode {
         SyntaxNode::new_root(self.green_node.clone())
     }
+
+    pub fn get_errors<'a>(&'a self) -> &'a [String] {
+        &self.errors
+    }
 }
 
 #[cfg(test)]

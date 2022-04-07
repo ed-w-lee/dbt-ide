@@ -19,12 +19,6 @@ pub struct Materialization {
 }
 
 #[derive(Debug)]
-pub struct ModelRef {
-    name: String,
-    definition: Location,
-}
-
-#[derive(Debug)]
 pub struct Source {
     name: String,
     definition: Location,

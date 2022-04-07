@@ -27,6 +27,12 @@ from source_data
 
 
 {{ some_macro() }}
+
+{% macro test_unique_macro() %}
+hello
+{% endmacro %}
+
+{{ test_unique_macro() }}
 /*
     Uncomment the line below to remove records with null `id` values
 */
