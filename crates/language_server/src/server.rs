@@ -18,7 +18,7 @@ use tower_lsp::{
 use crate::{
     project::DbtProject,
     sql_file::ModelFile,
-    utils::{print_node, read_file, uri_to_path},
+    utils::{read_file, uri_to_path},
 };
 
 type JsonRpcResult<T> = tower_lsp::jsonrpc::Result<T>;
@@ -186,7 +186,6 @@ impl LanguageServer for Backend {
         };
         let model_file = model_file.value_mut();
         model_file.refresh(file_contents);
-        print_node(model_file.parsed_repr.syntax(), 2);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {

@@ -36,3 +36,4 @@ hello
 */
 
 -- where id is not null
+{% set test.test = ref('my_first_dbt_model') %}

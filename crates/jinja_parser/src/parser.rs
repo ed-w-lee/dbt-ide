@@ -331,20 +331,32 @@ impl Parser {
         ));
         self.skip_ws();
 
-        if self.current() == Some(TokenKind::Assign) {
-            self.builder
-                .start_node_at(block_checkpoint, StmtAssign.into());
-            self.bump(); // '='
-            self.parse_tuple(TupleParseMode::WithCondExpr, &[], false);
-            return false;
-        }
-        self.builder
-            .start_node_at(block_checkpoint, StmtAssignBlock.into());
-        self.builder
-            .start_node_at(start_checkpoint, AssignBlockStart.into());
-        self.parse_filter(None, false);
+        match self.error_until(&[TokenKind::Assign, TokenKind::BlockEnd, TokenKind::Pipe]) {
+            None => {
+                self.builder
+                    .start_node_at(block_checkpoint, StmtAssign.into());
+                self.errors
+                    .push("expected '=', '%}' or '|', not end of context".into());
+                false
+            }
+            Some(TokenKind::Assign) => {
+                self.builder
+                    .start_node_at(block_checkpoint, StmtAssign.into());
+                self.bump(); // '='
+                self.parse_tuple(TupleParseMode::WithCondExpr, &[], false);
+                false
+            }
+            Some(TokenKind::BlockEnd) | Some(TokenKind::Pipe) => {
+                self.builder
+                    .start_node_at(block_checkpoint, StmtAssignBlock.into());
+                self.builder
+                    .start_node_at(start_checkpoint, AssignBlockStart.into());
+                self.parse_filter(None, false);
 
-        true
+                true
+            }
+            _ => unreachable!(),
+        }
     }
 
     /// assumes current token in '('
