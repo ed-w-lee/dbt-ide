@@ -6,6 +6,7 @@
 
     Try changing "table" to "view" below
 */
+{{ref('my_first_dbt_model')}}
 
 with source_data as (
 
@@ -24,8 +25,6 @@ select *
 }, substitute='efgh', tags=['3', '4']) }}
 
 from source_data
-
-{{ ref }}
 
 {% macro test_unique_macro() %}
 hello

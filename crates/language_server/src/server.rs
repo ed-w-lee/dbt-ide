@@ -257,15 +257,7 @@ impl LanguageServer for Backend {
         &self,
         params: CompletionParams,
     ) -> JsonRpcResult<Option<CompletionResponse>> {
-        let mut completion_items: Vec<_> = self
-            .get_model_names()
-            .into_iter()
-            .map(|name| CompletionItem {
-                label: name,
-                kind: Some(CompletionItemKind::FILE),
-                ..Default::default()
-            })
-            .collect();
+        let mut completion_items = Vec::new();
 
         let current_uri = params.text_document_position.text_document.uri;
         let path = match uri_to_path(&current_uri) {
@@ -310,33 +302,39 @@ impl LanguageServer for Backend {
         eprintln!("Test {:?}", token);
         match token {
             rowan::TokenAtOffset::None => (),
-            rowan::TokenAtOffset::Single(leaf) => {
-                let call_node = leaf
-                    .ancestors()
-                    .find(|ancestor| ancestor.kind() == SyntaxKind::ExprCall);
-                match call_node {
-                    None => (),
-                    Some(call_node) => match call_node
-                        .children()
-                        .find(|child| child.kind() == SyntaxKind::ExprName)
-                    {
+            rowan::TokenAtOffset::Single(leaf) => {}
+            rowan::TokenAtOffset::Between(left, right) => {
+                if left.kind() == SyntaxKind::LeftParen {
+                    let call_node = left
+                        .ancestors()
+                        .find(|ancestor| ancestor.kind() == SyntaxKind::ExprCall);
+                    match call_node {
                         None => (),
-                        Some(name_node) => match name_node.last_child_or_token().unwrap() {
-                            rowan::NodeOrToken::Node(_) => unreachable!(),
-                            rowan::NodeOrToken::Token(token) => {
-                                if token.text() == "ref" {
-                                    completion_items.push(CompletionItem {
-                                        label: "WE_IN_REF_NOW".to_string(),
-                                        kind: Some(CompletionItemKind::FILE),
-                                        ..Default::default()
-                                    });
+                        Some(call_node) => match call_node
+                            .children()
+                            .find(|child| child.kind() == SyntaxKind::ExprName)
+                        {
+                            None => (),
+                            Some(name_node) => match name_node.last_child_or_token().unwrap() {
+                                rowan::NodeOrToken::Node(_) => unreachable!(),
+                                rowan::NodeOrToken::Token(token) => {
+                                    if token.text() == "ref" {
+                                        completion_items.extend(
+                                            self.get_model_names().into_iter().map(|name| {
+                                                CompletionItem {
+                                                    label: format!("'{}'", name),
+                                                    kind: Some(CompletionItemKind::FILE),
+                                                    ..Default::default()
+                                                }
+                                            }),
+                                        );
+                                    }
                                 }
-                            }
+                            },
                         },
-                    },
+                    }
                 }
             }
-            rowan::TokenAtOffset::Between(_, _) => (),
         }
 
         // Ok(Some(CompletionResponse::Array(

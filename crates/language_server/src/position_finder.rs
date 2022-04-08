@@ -18,7 +18,7 @@ impl PositionFinder {
         text.char_indices().fold(0, |acc, (pos, char)| match char {
             '\n' | '\r' => {
                 offset_to_newline.insert(pos as u32, acc);
-                newline_to_offset.push(pos as u32);
+                newline_to_offset.push((pos + 1) as u32);
                 acc + 1
             }
             _ => acc,
