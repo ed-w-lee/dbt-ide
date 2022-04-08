@@ -2009,25 +2009,25 @@ impl Parse {
     }
 }
 
+pub fn print_node(node: SyntaxNode, indent: usize) {
+    println!("{:>indent$}{node:?}", "", node = node, indent = 2 * indent);
+    node.children_with_tokens().for_each(|child| match child {
+        rowan::NodeOrToken::Node(n) => print_node(n, indent + 1),
+        rowan::NodeOrToken::Token(t) => {
+            println!(
+                "{:>indent$}{node:?}",
+                "",
+                node = t,
+                indent = 2 * (indent + 1)
+            );
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse, SyntaxNode};
+    use super::{parse, print_node};
     use crate::lexer::tokenize;
-
-    fn print_node(node: SyntaxNode, indent: usize) {
-        println!("{:>indent$}{node:?}", "", node = node, indent = 2 * indent);
-        node.children_with_tokens().for_each(|child| match child {
-            rowan::NodeOrToken::Node(n) => print_node(n, indent + 1),
-            rowan::NodeOrToken::Token(t) => {
-                println!(
-                    "{:>indent$}{node:?}",
-                    "",
-                    node = t,
-                    indent = 2 * (indent + 1)
-                );
-            }
-        })
-    }
 
     struct ParseTestCase {
         input: &'static str,

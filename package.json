@@ -7,7 +7,8 @@
   },
   "main": "./vscode_client/out/extension.js",
   "activationEvents": [
-    "workspaceContains:**/dbt_project.yml"
+    "workspaceContains:**/dbt_project.yml",
+    "onCommand:dbt-language-server.debug-tree"
   ],
   "contributes": {
     "configuration": {
@@ -31,7 +32,13 @@
           "description": "Traces the communication between VS Code and the language server."
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "dbt-language-server.debug-tree",
+        "title": "dbt Language Server: Show Debug Tree for open file"
+      }
+    ]
   },
   "directories": {
     "example": "examples"

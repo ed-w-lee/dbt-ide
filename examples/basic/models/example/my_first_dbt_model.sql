@@ -6,7 +6,7 @@
 
     Try changing "table" to "view" below
 */
-{{ref('my_first_dbt_model')}}
+{{ ref ('my_first_dbt_model')}}
 
 with source_data as (
 

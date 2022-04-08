@@ -3,6 +3,7 @@
  * Licensed under the MIT License. See License.txt in the project root for license information.
  * ------------------------------------------------------------------------------------------ */
 
+import * as child_process from "child_process";
 import * as path from "path";
 import {
     languages,
@@ -41,7 +42,6 @@ let client: LanguageClient;
 // type a = Parameters<>;
 
 export async function activate(context: ExtensionContext) {
-
     const traceOutputChannel = window.createOutputChannel("dbt Language Server trace");
     const command = process.env.SERVER_PATH || "dbt-language-server";
     const run: Executable = {
@@ -78,6 +78,43 @@ export async function activate(context: ExtensionContext) {
     client = new LanguageClient("dbt-language-server", "dbt language server", serverOptions, clientOptions);
     // activateInlayHints(context);
     client.start();
+
+
+    context.subscriptions.push(
+        commands.registerCommand('dbt-language-server.debug-tree', () => {
+            const panel = window.createWebviewPanel(
+                'dbt-language-server.debug-tree',
+                'dbt Language Server - Debug Syntax Tree',
+                ViewColumn.Beside,
+                {}
+            );
+
+            const command = process.env.DEBUG_TREE_PATH || "dbt-language-server-debug-tree";
+            let env = {
+                ...process.env,
+                RUST_LOG: "debug",
+            };
+            const updateWebView = () => {
+                let currDocument = window.activeTextEditor.document.getText();
+                let child = child_process.execFile(command, [], { env: env, timeout: 1000 }, (error, stdout, stderr) => {
+                    if (error) {
+                        console.log(error);
+                    }
+                    panel.webview.html = `<pre>${stdout}</pre>`;
+                });
+                child.stdin.write(currDocument);
+                child.stdin.end();
+            };
+            const interval = setInterval(updateWebView, 2000);
+            panel.onDidDispose(
+                () => {
+                    clearInterval(interval);
+                },
+                null,
+                context.subscriptions,
+            );
+        })
+    );
 }
 
 export function deactivate(): Thenable<void> | undefined {
