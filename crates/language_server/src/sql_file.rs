@@ -1,14 +1,11 @@
-use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::ops::Bound::{Excluded, Included};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use dbt_jinja_parser::lexer::tokenize;
 use dbt_jinja_parser::parser::{parse, Parse, SyntaxKind};
 use derivative::Derivative;
-use tower_lsp::lsp_types::{Location, Position};
 
-use crate::model::{Macro, Materialization, Object};
+use crate::model::{Macro, Materialization};
 use crate::position_finder::PositionFinder;
 use crate::utils::{read_file, SyntaxNode};
 
@@ -68,7 +65,7 @@ pub struct MacroFile {
 }
 
 impl MacroFile {
-    pub fn from_file(file_path: &Path, file_contents: &str) -> Result<Self, String> {
+    pub fn from_file(file_contents: &str) -> Result<Self, String> {
         let parsed_repr = parse(tokenize(file_contents));
         let syntax_tree = parsed_repr.green();
         let (macros, materializations) =
@@ -83,7 +80,7 @@ impl MacroFile {
 
     pub async fn from_file_path(file_path: &Path) -> Result<Self, String> {
         let file_contents = read_file(file_path).await?;
-        Self::from_file(file_path, &file_contents)
+        Self::from_file(&file_contents)
     }
 
     pub fn refresh(&mut self, file_contents: &str) {

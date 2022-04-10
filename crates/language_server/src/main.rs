@@ -1,14 +1,10 @@
-use std::collections::HashMap;
-
 use dashmap::DashMap;
-use sql_file::ModelFile;
-use tokio::sync::RwLock;
 use tower_lsp::{LspService, Server};
 
+mod files;
 mod model;
 mod position_finder;
 mod project;
-mod project_spec;
 mod server;
 mod sql_file;
 mod utils;
@@ -22,9 +18,7 @@ async fn main() {
 
     let (service, socket) = LspService::build(|client| Backend {
         client,
-        project: RwLock::new(None),
-        models: DashMap::new(),
-        macros: DashMap::new(),
+        projects: DashMap::new(),
     })
     .finish();
 
