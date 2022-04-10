@@ -17,7 +17,7 @@ use tower_lsp::{
 
 use crate::{
     project::DbtProject,
-    sql_file::ModelFile,
+    sql_file::{is_sql_file, MacroFile, ModelFile},
     utils::{read_file, uri_to_path},
 };
 
@@ -25,9 +25,13 @@ type JsonRpcResult<T> = tower_lsp::jsonrpc::Result<T>;
 
 pub struct Backend {
     pub client: Client,
-    /// Concurrent hashmap from stringified model path to the in-memory
+    pub project: RwLock<Option<DbtProject>>,
+    /// Concurrent hashmap from model file path to the in-memory
     /// parsed information for the model.
     pub models: DashMap<PathBuf, ModelFile>,
+    /// Concurrent hashmap from macro file path to the in-memory
+    /// parsed information for the macros.
+    pub macros: DashMap<PathBuf, MacroFile>,
 }
 
 #[tower_lsp::async_trait]
@@ -69,6 +73,32 @@ impl LanguageServer for Backend {
                 self.models.insert(p, m);
             });
 
+        let found_macro_paths = project.get_macro_paths();
+
+        let parsed_macros = match try_join_all(
+            found_macro_paths
+                .iter()
+                .map(|macro_path| MacroFile::from_file_path(macro_path)),
+        )
+        .await
+        {
+            Ok(macros) => macros,
+            Err(e) => return Err(Error::parse_error()),
+        };
+
+        self.macros.clear();
+        found_macro_paths
+            .into_iter()
+            .zip(parsed_macros.into_iter())
+            .for_each(|(p, m)| {
+                self.macros.insert(p, m);
+            });
+
+        {
+            let mut saved_project = self.project.write().await;
+            *saved_project = Some(project);
+        }
+
         Ok(InitializeResult {
             server_info: None,
             capabilities: ServerCapabilities {
@@ -106,36 +136,45 @@ impl LanguageServer for Backend {
                 return;
             }
         };
-        if !ModelFile::is_sql_file(&path) {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "not parsing file with path={:?} because it is not a sql file",
-                        params.text_document.uri
-                    ),
-                )
-                .await;
-            return;
+        let read_project = &*self.project.read().await;
+        let project = read_project.as_ref().unwrap();
+        if project.is_file_model(&path) {
+            let file_contents = params.text_document.text;
+            let parsed_model = match ModelFile::from_file(&path, &file_contents) {
+                Ok(model) => model,
+                Err(e) => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!(
+                                "couldn't parse model file with path={:?} due to {:?}",
+                                params.text_document.uri, e
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+            };
+            self.models.insert(path, parsed_model);
+        } else if project.is_file_macro(&path) {
+            let file_contents = params.text_document.text;
+            let parsed_macro = match MacroFile::from_file(&path, &file_contents) {
+                Ok(macro_file) => macro_file,
+                Err(e) => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!(
+                                "couldn't parse macro file with path={:?} due to {:?}",
+                                params.text_document.uri, e
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+            };
+            self.macros.insert(path, parsed_macro);
         }
-
-        let file_contents = params.text_document.text;
-        let parsed_model = match ModelFile::from_file(&path, &file_contents) {
-            Ok(model) => model,
-            Err(e) => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!(
-                            "couldn't parse model file with path={:?} due to {:?}",
-                            params.text_document.uri, e
-                        ),
-                    )
-                    .await;
-                return;
-            }
-        };
-        self.models.insert(path, parsed_model);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -155,37 +194,47 @@ impl LanguageServer for Backend {
                 return;
             }
         };
-        if !ModelFile::is_sql_file(&path) {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "not parsing file with path={:?} because it is not a sql file",
-                        params.text_document.uri
-                    ),
-                )
-                .await;
-            return;
+        let read_project = &*self.project.read().await;
+        let project = read_project.as_ref().unwrap();
+        if project.is_file_model(&path) {
+            let file_contents = &params.content_changes[0].text;
+            let mut model_file = match self.models.get_mut(&path) {
+                None => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!(
+                                "couldn't find entry for model file with path={:?}",
+                                params.text_document.uri
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+                Some(m) => m,
+            };
+            let model_file = model_file.value_mut();
+            model_file.refresh(file_contents);
+        } else if project.is_file_macro(&path) {
+            let file_contents = &params.content_changes[0].text;
+            let mut macro_file = match self.macros.get_mut(&path) {
+                None => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!(
+                                "couldn't find entry for macro file with path={:?}",
+                                params.text_document.uri
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+                Some(m) => m,
+            };
+            let macro_file = macro_file.value_mut();
+            macro_file.refresh(file_contents);
         }
-
-        let file_contents = &params.content_changes[0].text;
-        let mut model_file = match self.models.get_mut(&path) {
-            None => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!(
-                            "couldn't find entry for model file with path={:?}",
-                            params.text_document.uri
-                        ),
-                    )
-                    .await;
-                return;
-            }
-            Some(m) => m,
-        };
-        let model_file = model_file.value_mut();
-        model_file.refresh(file_contents);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -204,50 +253,77 @@ impl LanguageServer for Backend {
                 return;
             }
         };
-        if !ModelFile::is_sql_file(&path) {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "not parsing file with path={:?} because it is not a sql file",
-                        params.text_document.uri
-                    ),
-                )
-                .await;
-        }
-
-        if !path.exists() {
-            self.models.remove(&path);
-            return;
-        }
-        let mut model_file = match self.models.get_mut(&path) {
-            None => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!(
-                            "couldn't find entry for model file with path={:?}",
-                            params.text_document.uri
-                        ),
-                    )
-                    .await;
+        let read_project = &*self.project.read().await;
+        let project = read_project.as_ref().unwrap();
+        if project.is_file_model(&path) {
+            if !path.exists() {
+                self.models.remove(&path);
                 return;
             }
-            Some(m) => m,
-        };
-        match model_file.value_mut().refresh_with_path(&path).await {
-            Ok(_) => (),
-            Err(e) => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!(
-                            "failed to refresh model file with path={:?} because {:?}",
-                            path, e
-                        ),
-                    )
-                    .await;
+            let mut model_file = match self.models.get_mut(&path) {
+                None => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!(
+                                "couldn't find entry for model file with path={:?}",
+                                params.text_document.uri
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+                Some(m) => m,
+            };
+            match model_file.value_mut().refresh_with_path(&path).await {
+                Ok(_) => (),
+                Err(e) => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!(
+                                "failed to refresh model file with path={:?} because {:?}",
+                                path, e
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+            }
+        } else if project.is_file_macro(&path) {
+            if !path.exists() {
+                self.macros.remove(&path);
                 return;
+            }
+            let mut macro_file = match self.macros.get_mut(&path) {
+                None => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!(
+                                "couldn't find entry for macro file with path={:?}",
+                                params.text_document.uri
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+                Some(m) => m,
+            };
+            match macro_file.value_mut().refresh_with_path(&path).await {
+                Ok(_) => (),
+                Err(e) => {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!(
+                                "failed to refresh macro file with path={:?} because {:?}",
+                                path, e
+                            ),
+                        )
+                        .await;
+                    return;
+                }
             }
         }
     }
@@ -275,30 +351,55 @@ impl LanguageServer for Backend {
             }
         };
 
-        let model_file = &*match self.models.get(&path) {
-            None => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("couldn't find entry for file with path={:?}", path),
-                    )
-                    .await;
-                return Ok(Some(CompletionResponse::Array(completion_items)));
+        let read_project = &*self.project.read().await;
+        let project = read_project.as_ref().unwrap();
+        let (offset, syntax_tree) = {
+            if project.is_file_model(&path) {
+                match self.models.get(&path) {
+                    None => {
+                        self.client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("couldn't find entry for file with path={:?}", path),
+                            )
+                            .await;
+                        return Ok(Some(CompletionResponse::Array(completion_items)));
+                    }
+                    Some(model_file) => (
+                        model_file
+                            .position_finder
+                            .get_offset(params.text_document_position.position),
+                        model_file.parsed_repr.syntax(),
+                    ),
+                }
+            } else if project.is_file_macro(&path) {
+                match self.macros.get(&path) {
+                    None => {
+                        self.client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("couldn't find entry for file with path={:?}", path),
+                            )
+                            .await;
+                        return Ok(Some(CompletionResponse::Array(completion_items)));
+                    }
+                    Some(macro_file) => (
+                        macro_file
+                            .position_finder
+                            .get_offset(params.text_document_position.position),
+                        macro_file.parsed_repr.syntax(),
+                    ),
+                }
+            } else {
+                return Ok(Some(CompletionResponse::Array(vec![])));
             }
-            Some(model_file) => model_file,
         };
-        let offset = model_file
-            .position_finder
-            .get_offset(params.text_document_position.position);
         eprintln!(
             "position={:?} and offset={:?}",
             params.text_document_position.position, offset
         );
-        let token = model_file
-            .parsed_repr
-            .syntax()
-            .token_at_offset(offset.into());
-        eprintln!("Test {:?}", token);
+        let token = syntax_tree.token_at_offset(offset.into());
+        eprintln!("current position: {:?}", token);
         match token {
             rowan::TokenAtOffset::None => (),
             rowan::TokenAtOffset::Single(leaf) => {}
@@ -333,19 +434,27 @@ impl LanguageServer for Backend {
                         },
                     }
                 }
+                if left
+                    .ancestors()
+                    .find(|ancestor| match ancestor.kind() {
+                        SyntaxKind::Variable => true,
+                        _ => false,
+                    })
+                    .is_some()
+                {
+                    eprintln!("looking for macros {:#?}", self.macros);
+                    completion_items.extend(self.get_macro_names().into_iter().map(|name| {
+                        CompletionItem {
+                            label: name,
+                            kind: Some(CompletionItemKind::FUNCTION),
+                            ..Default::default()
+                        }
+                    }));
+                }
             }
         }
 
-        // Ok(Some(CompletionResponse::Array(
-        //     self.models
-        //         .iter()
-        //         .map(|model| CompletionItem {
-        //             label: model.to_owned(),
-        //             kind: Some(CompletionItemKind::VARIABLE),
-        //             ..Default::default()
-        //         })
-        //         .collect(),
-        // )))
+        eprintln!("completion_items {:?}", completion_items);
         Ok(Some(CompletionResponse::Array(completion_items)))
     }
 }
@@ -355,6 +464,20 @@ impl Backend {
         self.models
             .iter()
             .map(|model| model.value().name.clone())
+            .collect()
+    }
+
+    fn get_macro_names(&self) -> Vec<String> {
+        self.macros
+            .iter()
+            .map(|macro_file| {
+                macro_file
+                    .macros
+                    .iter()
+                    .filter_map(|mac| mac.name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .flatten()
             .collect()
     }
 }

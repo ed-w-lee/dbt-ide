@@ -3,7 +3,10 @@ use walkdir::WalkDir;
 
 use std::ffi::OsStr;
 
-use crate::{project_spec::DbtProjectSpec, sql_file::ModelFile};
+use crate::{
+    project_spec::DbtProjectSpec,
+    sql_file::{is_sql_file, ModelFile},
+};
 
 #[derive(Debug)]
 pub struct DbtProject {
@@ -50,26 +53,53 @@ impl DbtProject {
         None
     }
 
-    pub fn get_model_paths(&self) -> Vec<PathBuf> {
-        let model_root_paths = &self.spec.model_paths;
-        model_root_paths
+    fn get_sql_files_in_paths(&self, paths: &[String]) -> Vec<PathBuf> {
+        paths
             .iter()
-            .map(|model_root_path| {
-                let model_root = self.root_path.join(model_root_path);
-                WalkDir::new(model_root)
-                    .into_iter()
-                    .filter_map(|e| match e {
-                        Err(_) => None,
-                        Ok(e) => {
-                            if ModelFile::is_sql_file(e.path()) {
-                                Some(e.path().to_path_buf())
-                            } else {
-                                None
-                            }
+            .map(|path| {
+                let sub_root = self.root_path.join(path);
+                WalkDir::new(sub_root).into_iter().filter_map(|e| match e {
+                    Err(_) => None,
+                    Ok(e) => {
+                        if is_sql_file(e.path()) {
+                            Some(e.path().to_path_buf())
+                        } else {
+                            None
                         }
-                    })
+                    }
+                })
             })
             .flatten()
             .collect()
+    }
+
+    pub fn get_model_paths(&self) -> Vec<PathBuf> {
+        self.get_sql_files_in_paths(&self.spec.model_paths)
+    }
+
+    pub fn get_macro_paths(&self) -> Vec<PathBuf> {
+        self.get_sql_files_in_paths(&self.spec.macro_paths)
+    }
+
+    pub fn is_file_model(&self, path: &Path) -> bool {
+        if !is_sql_file(path) {
+            false
+        } else {
+            self.spec
+                .model_paths
+                .iter()
+                .any(|model_root| path.starts_with(self.root_path.join(model_root)))
+        }
+    }
+
+    pub fn is_file_macro(&self, path: &Path) -> bool {
+        if !is_sql_file(path) {
+            false
+        } else {
+            self.spec
+                .macro_paths
+                .iter()
+                .any(|macro_root| path.starts_with(self.root_path.join(macro_root)))
+        }
     }
 }

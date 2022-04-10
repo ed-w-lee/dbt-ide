@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use tower_lsp::lsp_types::{Location, Range};
 
 /**
@@ -6,16 +8,15 @@ use tower_lsp::lsp_types::{Location, Range};
 
 #[derive(Debug)]
 pub struct Macro {
-    name: String,
-    caller_args: Vec<String>,
-    args: Vec<String>,
-    definition: Location,
+    pub name: Option<String>,
+    pub args: Vec<String>,
+    pub default_args: Vec<(Option<String>, Option<String>)>,
 }
 
 #[derive(Debug)]
 pub struct Materialization {
-    name: String,
-    definition: Location,
+    pub name: String,
+    pub definition: Location,
 }
 
 #[derive(Debug)]

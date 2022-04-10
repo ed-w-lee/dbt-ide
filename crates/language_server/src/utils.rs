@@ -26,7 +26,8 @@ pub fn uri_to_path(uri: &Url) -> Result<PathBuf, Error> {
     }
 }
 
-type SyntaxNode = rowan::SyntaxNode<Lang>;
+pub type SyntaxNode = rowan::SyntaxNode<Lang>;
+#[allow(unused)]
 pub fn print_node(node: SyntaxNode, indent: usize) {
     eprintln!("{:>indent$}{node:?}", "", node = node, indent = 2 * indent);
     node.children_with_tokens().for_each(|child| match child {

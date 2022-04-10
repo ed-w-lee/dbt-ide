@@ -201,7 +201,7 @@ impl Parser {
         self.skip_ws();
         match name_mode {
             AssignTargetNameMode::NameOnly => match self.current() {
-                Some(TokenKind::Name) => self.bump(),
+                Some(TokenKind::Name) => self.register(SyntaxKind::ExprName),
                 Some(kind) if Self::is_expression_end(kind) => {
                     self.errors
                         .push("expected name for assign target, but found end of context".into());
@@ -2012,12 +2012,20 @@ pub fn parse(tokens: Vec<Token>) -> Parse {
 type SyntaxNode = rowan::SyntaxNode<Lang>;
 
 impl Parse {
+    pub fn green(&self) -> GreenNode {
+        self.green_node.clone()
+    }
+
     pub fn syntax(&self) -> SyntaxNode {
         SyntaxNode::new_root(self.green_node.clone())
     }
 
     pub fn get_errors<'a>(&'a self) -> &'a [String] {
         &self.errors
+    }
+
+    pub fn take_errors(self) -> Vec<String> {
+        self.errors
     }
 }
 

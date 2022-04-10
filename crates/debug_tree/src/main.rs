@@ -10,6 +10,7 @@ fn main() -> Result<()> {
     let mut stdin = io::stdin();
     stdin.read_to_string(&mut buffer)?;
     let parse = parse(tokenize(&buffer));
+    print!("{:#?}\n", parse.get_errors());
     print_node(parse.syntax(), 2);
     Ok(())
 }

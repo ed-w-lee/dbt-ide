@@ -6,6 +6,7 @@ use crate::utils::read_file;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct DbtProjectSpec {
+    pub name: String,
     #[serde(rename = "model-paths", default = "default_model_paths")]
     pub model_paths: Vec<String>,
     #[serde(rename = "macro-paths", default = "default_macro_paths")]
