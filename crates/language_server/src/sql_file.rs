@@ -133,21 +133,27 @@ impl MacroFile {
     }
 
     fn extract_default_arg(default_arg_node: &SyntaxNode) -> (Option<String>, Option<String>) {
-        let children = default_arg_node.children();
+        let children = default_arg_node.children_with_tokens();
         let mut seen_assign = false;
         let mut assign_target = None;
         let mut default_value = None;
         for child in children {
+            eprintln!("{:?}", child);
             if !seen_assign {
                 match child.kind() {
-                    SyntaxKind::ExprName => assign_target = Some(child.text().to_string()),
+                    SyntaxKind::ExprName => {
+                        assign_target = Some(child.into_node().unwrap().text().to_string())
+                    }
                     SyntaxKind::Assign => seen_assign = true,
                     _ => (),
                 }
             } else {
                 match child.kind() {
                     SyntaxKind::Whitespace => (),
-                    _ => default_value = Some(child.text().to_string()),
+                    _ => {
+                        default_value = Some(child.into_node().unwrap().text().to_string());
+                        break;
+                    }
                 }
             }
         }
@@ -170,8 +176,8 @@ impl MacroFile {
                     match child.kind() {
                         SyntaxKind::SignatureArg => {
                             match Self::get_child_of_kind(&child, SyntaxKind::ExprName) {
-                                None => (),
-                                Some(arg_name) => args.push(arg_name.text().to_string()),
+                                None => args.push(None),
+                                Some(arg_name) => args.push(Some(arg_name.text().to_string())),
                             }
                         }
                         SyntaxKind::SignatureDefaultArg => {

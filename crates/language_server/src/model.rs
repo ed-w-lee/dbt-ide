@@ -6,10 +6,10 @@ use tower_lsp::lsp_types::{Location, Range};
  * Inter-file metadata
  */
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Macro {
     pub name: Option<String>,
-    pub args: Vec<String>,
+    pub args: Vec<Option<String>>,
     pub default_args: Vec<(Option<String>, Option<String>)>,
 }
 

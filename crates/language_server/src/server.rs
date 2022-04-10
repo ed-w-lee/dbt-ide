@@ -9,13 +9,14 @@ use tower_lsp::{
     lsp_types::{
         CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams,
         CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-        DidOpenTextDocumentParams, InitializeParams, InitializeResult, MessageType,
-        ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+        DidOpenTextDocumentParams, InitializeParams, InitializeResult, InsertTextFormat,
+        MessageType, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     },
     Client, LanguageServer,
 };
 
 use crate::{
+    model::Macro,
     project::DbtProject,
     sql_file::{is_sql_file, MacroFile, ModelFile},
     utils::{read_file, uri_to_path},
@@ -443,12 +444,30 @@ impl LanguageServer for Backend {
                     .is_some()
                 {
                     eprintln!("looking for macros {:#?}", self.macros);
-                    completion_items.extend(self.get_macro_names().into_iter().map(|name| {
-                        CompletionItem {
-                            label: name,
-                            kind: Some(CompletionItemKind::FUNCTION),
-                            ..Default::default()
-                        }
+                    completion_items.extend(self.get_macros().into_iter().filter_map(|mac| {
+                        mac.name.map(|macro_name| {
+                            let mut i = 0;
+                            let mut insert_text = macro_name.clone() + "(";
+                            for arg in mac.args {
+                                if i > 0 {
+                                    insert_text.push_str(", ");
+                                }
+                                i = i + 1;
+                                insert_text.push_str(&format!(
+                                    "${{{}:{}}}",
+                                    i,
+                                    arg.unwrap_or("".to_string())
+                                ));
+                            }
+                            insert_text.push(')');
+                            CompletionItem {
+                                label: macro_name,
+                                kind: Some(CompletionItemKind::FUNCTION),
+                                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                                insert_text: Some(insert_text),
+                                ..Default::default()
+                            }
+                        })
                     }));
                 }
             }
@@ -467,16 +486,10 @@ impl Backend {
             .collect()
     }
 
-    fn get_macro_names(&self) -> Vec<String> {
+    fn get_macros(&self) -> Vec<Macro> {
         self.macros
             .iter()
-            .map(|macro_file| {
-                macro_file
-                    .macros
-                    .iter()
-                    .filter_map(|mac| mac.name.clone())
-                    .collect::<Vec<_>>()
-            })
+            .map(|macro_file| macro_file.macros.clone())
             .flatten()
             .collect()
     }
