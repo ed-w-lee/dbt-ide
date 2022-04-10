@@ -19,6 +19,11 @@ pub struct MacroFile {
     pub materializations: Vec<Materialization>,
 }
 
+enum TraverseOrder {
+    Forward,
+    Backward,
+}
+
 impl MacroFile {
     pub fn from_file(file_contents: &str) -> Result<Self, String> {
         let parsed_repr = parse(tokenize(file_contents));
@@ -56,26 +61,31 @@ impl MacroFile {
         for some_macro in syntax_tree.descendants() {
             match some_macro.kind() {
                 SyntaxKind::StmtMacro => macros.push(Self::extract_macro(&some_macro)),
-                SyntaxKind::StmtMaterialization => materializations.push(Materialization {
-                    name: todo!(),
-                    definition: todo!(),
-                }),
+                SyntaxKind::StmtMaterialization => {
+                    materializations.push(Self::extract_materialization(&some_macro))
+                }
                 _ => (),
             }
         }
         (macros, materializations)
     }
 
-    fn get_child_of_kind(node: &SyntaxNode, kind: SyntaxKind) -> Option<SyntaxNode> {
-        node.children()
-            .filter_map(|child| {
-                if child.kind() == kind {
-                    Some(child)
-                } else {
-                    None
-                }
-            })
-            .next()
+    fn get_child_of_kind(
+        node: &SyntaxNode,
+        kind: SyntaxKind,
+        order: TraverseOrder,
+    ) -> Option<SyntaxNode> {
+        let check_kind = |child: SyntaxNode| {
+            if child.kind() == kind {
+                Some(child)
+            } else {
+                None
+            }
+        };
+        match order {
+            TraverseOrder::Forward => node.children().filter_map(check_kind).next(),
+            TraverseOrder::Backward => node.children().filter_map(check_kind).last(),
+        }
     }
 
     fn extract_default_arg(default_arg_node: &SyntaxNode) -> (Option<String>, Option<String>) {
@@ -108,11 +118,18 @@ impl MacroFile {
 
     fn extract_macro(macro_node: &SyntaxNode) -> Macro {
         debug_assert!(macro_node.kind() == SyntaxKind::StmtMacro);
-        let macro_start = Self::get_child_of_kind(macro_node, SyntaxKind::MacroBlockStart).unwrap();
-        let name = Self::get_child_of_kind(&macro_start, SyntaxKind::ExprName)
-            .map(|n| n.text().to_string());
+        let macro_start = Self::get_child_of_kind(
+            macro_node,
+            SyntaxKind::MacroBlockStart,
+            TraverseOrder::Forward,
+        )
+        .unwrap();
+        let name =
+            Self::get_child_of_kind(&macro_start, SyntaxKind::ExprName, TraverseOrder::Forward)
+                .map(|n| n.text().to_string());
 
-        let signature = Self::get_child_of_kind(&macro_start, SyntaxKind::Signature);
+        let signature =
+            Self::get_child_of_kind(&macro_start, SyntaxKind::Signature, TraverseOrder::Forward);
         let mut args = Vec::new();
         let mut default_args = Vec::new();
         match signature {
@@ -121,7 +138,11 @@ impl MacroFile {
                 for child in node.children() {
                     match child.kind() {
                         SyntaxKind::SignatureArg => {
-                            match Self::get_child_of_kind(&child, SyntaxKind::ExprName) {
+                            match Self::get_child_of_kind(
+                                &child,
+                                SyntaxKind::ExprName,
+                                TraverseOrder::Forward,
+                            ) {
                                 None => args.push(None),
                                 Some(arg_name) => args.push(Some(arg_name.text().to_string())),
                             }
@@ -139,6 +160,55 @@ impl MacroFile {
             name,
             args,
             default_args,
+        }
+    }
+
+    fn extract_materialization(mat_node: &SyntaxNode) -> Materialization {
+        debug_assert!(mat_node.kind() == SyntaxKind::StmtMaterialization);
+        let mat_start = Self::get_child_of_kind(
+            mat_node,
+            SyntaxKind::MaterializationBlockStart,
+            TraverseOrder::Forward,
+        )
+        .unwrap();
+        let name =
+            Self::get_child_of_kind(&mat_start, SyntaxKind::ExprName, TraverseOrder::Forward)
+                .map(|n| n.text().to_string());
+
+        if let Some(_) = Self::get_child_of_kind(
+            &mat_start,
+            SyntaxKind::MaterializationDefault,
+            TraverseOrder::Forward,
+        ) {
+            Materialization {
+                name,
+                adapter: "default".to_string(),
+            }
+        } else if let Some(adapter_node) = Self::get_child_of_kind(
+            &mat_start,
+            SyntaxKind::MaterializationAdapter,
+            TraverseOrder::Backward,
+        ) {
+            if let Some(str_node) = Self::get_child_of_kind(
+                &adapter_node,
+                SyntaxKind::ExprConstantString,
+                TraverseOrder::Forward,
+            ) {
+                Materialization {
+                    name,
+                    adapter: str_node.text().to_string(),
+                }
+            } else {
+                Materialization {
+                    name,
+                    adapter: "default".to_string(),
+                }
+            }
+        } else {
+            Materialization {
+                name,
+                adapter: "default".to_string(),
+            }
         }
     }
 }

@@ -15,8 +15,8 @@ pub struct Macro {
 
 #[derive(Debug)]
 pub struct Materialization {
-    pub name: String,
-    pub definition: Location,
+    pub name: Option<String>,
+    pub adapter: String,
 }
 
 #[derive(Debug)]

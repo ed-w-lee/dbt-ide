@@ -6,7 +6,6 @@
 
     Try changing "table" to "view" below
 */
-{{ ref ('my_first_dbt_model')}}
 
 with source_data as (
 
@@ -26,14 +25,8 @@ select *
 
 from source_data
 
-{% macro test_unique_macro() %}
-hello
-{% endmacro %}
-
-{{ test_unique_macro() }}
 /*
     Uncomment the line below to remove records with null `id` values
 */
 
 -- where id is not null
-{% set test.test = ref('my_first_dbt_model') %}
