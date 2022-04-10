@@ -4,9 +4,11 @@ use dashmap::DashMap;
 use tower_lsp::{
     jsonrpc::Error,
     lsp_types::{
-        CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializeResult,
-        MessageType, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+        request::{GotoDeclarationParams, GotoDeclarationResponse},
+        CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
+        DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+        InitializeParams, InitializeResult, MessageType, ServerCapabilities,
+        TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     },
     Client, LanguageServer,
 };
@@ -54,6 +56,7 @@ impl LanguageServer for Backend {
                     work_done_progress_options: Default::default(),
                     all_commit_characters: None,
                 }),
+                declaration_provider: Some(DeclarationCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -64,20 +67,9 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let path = match uri_to_path(&params.text_document.uri) {
+        let path = match self.uri_to_path(&params.text_document.uri).await {
+            Err(_) => return,
             Ok(path) => path,
-            Err(e) => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!(
-                            "couldn't parse uri={:?} to path due to {:?}",
-                            params.text_document.uri, e
-                        ),
-                    )
-                    .await;
-                return;
-            }
         };
         let file_contents = match read_file(&path).await {
             Err(e) => {
@@ -109,20 +101,9 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        let path = match uri_to_path(&params.text_document.uri) {
+        let path = match self.uri_to_path(&params.text_document.uri).await {
+            Err(_) => return,
             Ok(path) => path,
-            Err(e) => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!(
-                            "couldn't parse uri={:?} to path due to {:?}",
-                            params.text_document.uri, e
-                        ),
-                    )
-                    .await;
-                return;
-            }
         };
         let file_contents = &params.content_changes[0].text;
         for project in self.projects.iter() {
@@ -144,20 +125,9 @@ impl LanguageServer for Backend {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let path = match uri_to_path(&params.text_document.uri) {
+        let path = match self.uri_to_path(&params.text_document.uri).await {
+            Err(_) => return,
             Ok(path) => path,
-            Err(e) => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!(
-                            "couldn't parse uri={:?} to path due to {:?}",
-                            params.text_document.uri, e
-                        ),
-                    )
-                    .await;
-                return;
-            }
         };
         let file_contents = match read_file(&path).await {
             Err(e) => {
@@ -199,21 +169,7 @@ impl LanguageServer for Backend {
         params: CompletionParams,
     ) -> JsonRpcResult<Option<CompletionResponse>> {
         let current_uri = params.text_document_position.text_document.uri;
-        let path = match uri_to_path(&current_uri) {
-            Ok(path) => path,
-            Err(e) => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!(
-                            "couldn't open file with uri={:?} due to {:?}",
-                            current_uri, e
-                        ),
-                    )
-                    .await;
-                return Err(Error::parse_error());
-            }
-        };
+        let path = self.uri_to_path(&current_uri).await?;
 
         Ok(Some(CompletionResponse::Array(
             self.projects
@@ -231,5 +187,47 @@ impl LanguageServer for Backend {
                 .flatten()
                 .collect(),
         )))
+    }
+
+    async fn goto_declaration(
+        &self,
+        params: GotoDeclarationParams,
+    ) -> JsonRpcResult<Option<GotoDeclarationResponse>> {
+        let current_uri = params.text_document_position_params.text_document.uri;
+        let path = self.uri_to_path(&current_uri).await?;
+        Ok(Some(GotoDeclarationResponse::Link(
+            self.projects
+                .iter()
+                .filter_map(|project| {
+                    if path.starts_with(project.key()) {
+                        Some(project.get_declaration(
+                            path.clone(),
+                            params.text_document_position_params.position,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .flatten()
+                .collect(),
+        )))
+        // Err(Error::method_not_found())
+    }
+}
+
+impl Backend {
+    async fn uri_to_path(&self, uri: &Url) -> Result<PathBuf, Error> {
+        match uri_to_path(uri) {
+            Ok(path) => Ok(path),
+            Err(e) => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("couldn't open file with uri={:?} due to {:?}", uri, e),
+                    )
+                    .await;
+                return Err(Error::parse_error());
+            }
+        }
     }
 }

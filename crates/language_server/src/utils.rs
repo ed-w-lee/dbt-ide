@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dbt_jinja_parser::parser::Lang;
+use dbt_jinja_parser::parser::{Lang, SyntaxKind};
 use tokio::fs::read;
 use tower_lsp::{jsonrpc::Error, lsp_types::Url};
 
@@ -48,4 +48,27 @@ pub fn print_node(node: SyntaxNode, indent: usize) {
 
 pub fn is_sql_file(path: &Path) -> bool {
     path.extension() == Some(OsStr::new("sql"))
+}
+
+pub enum TraverseOrder {
+    Forward,
+    Backward,
+}
+
+pub fn get_child_of_kind(
+    node: &SyntaxNode,
+    kind: SyntaxKind,
+    order: TraverseOrder,
+) -> Option<SyntaxNode> {
+    let check_kind = |child: SyntaxNode| {
+        if child.kind() == kind {
+            Some(child)
+        } else {
+            None
+        }
+    };
+    match order {
+        TraverseOrder::Forward => node.children().filter_map(check_kind).next(),
+        TraverseOrder::Backward => node.children().filter_map(check_kind).last(),
+    }
 }

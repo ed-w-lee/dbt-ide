@@ -8,20 +8,20 @@ In vague order of priority.
 
 - [ ] dbt-jinja parsing
   - [x] lossless syntax tree construction
-  - [ ] conversion of lossless syntax tree to AST
   - [ ] informative errors
+  - [ ] conversion of lossless syntax tree to AST
 - [ ] dbt project parsing
   - [ ] non-jinja files
     - [ ] dbt_project.yml
     - [ ] tests
     - [ ] sources
     - [ ] seeds
-    - [ ] macros
     - [ ] profiles.yml
     - [ ] documentation blocks with markdown
     - [ ] exposures
   - [ ] SQL files
-    - [ ] models
+    - [x] macros
+    - [x] models
     - [ ] snapshots
     - [ ] analyses
 - [ ] basic dbt-jinja LSP features (+ VSCode extension)
@@ -43,7 +43,7 @@ In vague order of priority.
     - [ ] test model
     - [ ] template documentation
     - [ ] compile and/or show compiled sql
-  - [ ] macro and control-flow auto-suggest
+  - [x] macro and control-flow auto-suggest
   - [ ] update ref() on rename
 
 - [ ] electron frontend

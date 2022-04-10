@@ -6,7 +6,7 @@ use derivative::Derivative;
 
 use crate::model::{Macro, Materialization};
 use crate::position_finder::PositionFinder;
-use crate::utils::{read_file, SyntaxNode};
+use crate::utils::{get_child_of_kind, read_file, SyntaxNode, TraverseOrder};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -17,11 +17,6 @@ pub struct MacroFile {
     pub parsed_repr: Parse,
     pub macros: Vec<Macro>,
     pub materializations: Vec<Materialization>,
-}
-
-enum TraverseOrder {
-    Forward,
-    Backward,
 }
 
 impl MacroFile {
@@ -70,24 +65,6 @@ impl MacroFile {
         (macros, materializations)
     }
 
-    fn get_child_of_kind(
-        node: &SyntaxNode,
-        kind: SyntaxKind,
-        order: TraverseOrder,
-    ) -> Option<SyntaxNode> {
-        let check_kind = |child: SyntaxNode| {
-            if child.kind() == kind {
-                Some(child)
-            } else {
-                None
-            }
-        };
-        match order {
-            TraverseOrder::Forward => node.children().filter_map(check_kind).next(),
-            TraverseOrder::Backward => node.children().filter_map(check_kind).last(),
-        }
-    }
-
     fn extract_default_arg(default_arg_node: &SyntaxNode) -> (Option<String>, Option<String>) {
         let children = default_arg_node.children_with_tokens();
         let mut seen_assign = false;
@@ -118,18 +95,22 @@ impl MacroFile {
 
     fn extract_macro(macro_node: &SyntaxNode) -> Macro {
         debug_assert!(macro_node.kind() == SyntaxKind::StmtMacro);
-        let macro_start = Self::get_child_of_kind(
+        let macro_start = get_child_of_kind(
             macro_node,
             SyntaxKind::MacroBlockStart,
             TraverseOrder::Forward,
         )
         .unwrap();
-        let name =
-            Self::get_child_of_kind(&macro_start, SyntaxKind::ExprName, TraverseOrder::Forward)
-                .map(|n| n.text().to_string());
+        let name_node =
+            get_child_of_kind(&macro_start, SyntaxKind::ExprName, TraverseOrder::Forward);
+        let declaration_selection = match &name_node {
+            None => macro_start.text_range(),
+            Some(node) => node.text_range(),
+        };
+        let name = name_node.map(|n| n.text().to_string());
 
         let signature =
-            Self::get_child_of_kind(&macro_start, SyntaxKind::Signature, TraverseOrder::Forward);
+            get_child_of_kind(&macro_start, SyntaxKind::Signature, TraverseOrder::Forward);
         let mut args = Vec::new();
         let mut default_args = Vec::new();
         match signature {
@@ -138,7 +119,7 @@ impl MacroFile {
                 for child in node.children() {
                     match child.kind() {
                         SyntaxKind::SignatureArg => {
-                            match Self::get_child_of_kind(
+                            match get_child_of_kind(
                                 &child,
                                 SyntaxKind::ExprName,
                                 TraverseOrder::Forward,
@@ -158,6 +139,8 @@ impl MacroFile {
         }
         Macro {
             name,
+            declaration: macro_node.text_range(),
+            declaration_selection,
             args,
             default_args,
         }
@@ -165,17 +148,16 @@ impl MacroFile {
 
     fn extract_materialization(mat_node: &SyntaxNode) -> Materialization {
         debug_assert!(mat_node.kind() == SyntaxKind::StmtMaterialization);
-        let mat_start = Self::get_child_of_kind(
+        let mat_start = get_child_of_kind(
             mat_node,
             SyntaxKind::MaterializationBlockStart,
             TraverseOrder::Forward,
         )
         .unwrap();
-        let name =
-            Self::get_child_of_kind(&mat_start, SyntaxKind::ExprName, TraverseOrder::Forward)
-                .map(|n| n.text().to_string());
+        let name = get_child_of_kind(&mat_start, SyntaxKind::ExprName, TraverseOrder::Forward)
+            .map(|n| n.text().to_string());
 
-        if let Some(_) = Self::get_child_of_kind(
+        if let Some(_) = get_child_of_kind(
             &mat_start,
             SyntaxKind::MaterializationDefault,
             TraverseOrder::Forward,
@@ -184,12 +166,12 @@ impl MacroFile {
                 name,
                 adapter: "default".to_string(),
             }
-        } else if let Some(adapter_node) = Self::get_child_of_kind(
+        } else if let Some(adapter_node) = get_child_of_kind(
             &mat_start,
             SyntaxKind::MaterializationAdapter,
             TraverseOrder::Backward,
         ) {
-            if let Some(str_node) = Self::get_child_of_kind(
+            if let Some(str_node) = get_child_of_kind(
                 &adapter_node,
                 SyntaxKind::ExprConstantString,
                 TraverseOrder::Forward,

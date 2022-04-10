@@ -2,14 +2,16 @@ use dashmap::DashMap;
 use dbt_jinja_parser::parser::SyntaxKind;
 use futures::future::try_join_all;
 use std::path::{Path, PathBuf};
-use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, InsertTextFormat, Position};
+use tower_lsp::lsp_types::{
+    CompletionItem, CompletionItemKind, InsertTextFormat, LocationLink, Position,
+};
 use walkdir::WalkDir;
 
 use crate::files::macro_file::MacroFile;
 use crate::files::model_file::ModelFile;
 use crate::files::project_yml::DbtProjectSpec;
 use crate::model::Macro;
-use crate::utils::{is_sql_file, SyntaxNode};
+use crate::utils::{get_child_of_kind, is_sql_file, SyntaxNode, TraverseOrder};
 
 #[derive(Debug)]
 pub struct DbtProject {
@@ -338,6 +340,102 @@ impl DbtProject {
         completion_items
     }
 
+    fn get_model_declaration(&self, call_node: &SyntaxNode) -> Vec<LocationLink> {
+        match get_child_of_kind(call_node, SyntaxKind::ExprName, TraverseOrder::Forward) {
+            None => vec![],
+            Some(name_node) => match name_node.last_child_or_token().unwrap() {
+                rowan::NodeOrToken::Node(_) => unreachable!(),
+                rowan::NodeOrToken::Token(token) => {
+                    if token.text() == "ref" {
+                        match call_node
+                            .descendants()
+                            .find(|node| node.kind() == SyntaxKind::CallStaticArg)
+                        {
+                            None => vec![],
+                            Some(arg_node) => {
+                                match get_child_of_kind(
+                                    &arg_node,
+                                    SyntaxKind::ExprConstantString,
+                                    TraverseOrder::Forward,
+                                ) {
+                                    None => vec![],
+                                    Some(model_name_node) => {
+                                        let model_name = model_name_node.text().to_string();
+                                        let model_path =
+                                            self.get_model_path_from_string(model_name.trim());
+                                        match model_path {
+                                            None => vec![],
+                                            Some(path) => {
+                                                vec![LocationLink {
+                                                    origin_selection_range: todo!(),
+                                                    target_uri: todo!(),
+                                                    target_range: todo!(),
+                                                    target_selection_range: todo!(),
+                                                }]
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        vec![]
+                    }
+                }
+            },
+        }
+    }
+
+    pub fn get_declaration(&self, path: PathBuf, position: Position) -> Vec<LocationLink> {
+        let mut locations = Vec::new();
+
+        let (offset, syntax_tree) = {
+            if self.is_file_model(&path) {
+                match self.models.get(&path) {
+                    None => {
+                        eprintln!("couldn't find model corresponding to path={:?}", path);
+                        return locations;
+                    }
+                    Some(model_file) => (
+                        model_file.position_finder.get_offset(position),
+                        model_file.parsed_repr.syntax(),
+                    ),
+                }
+            } else if self.is_file_macro(&path) {
+                match self.macros.get(&path) {
+                    None => {
+                        eprintln!("couldn't find macro corresponding to path={:?}", path);
+                        return locations;
+                    }
+                    Some(macro_file) => (
+                        macro_file.position_finder.get_offset(position),
+                        macro_file.parsed_repr.syntax(),
+                    ),
+                }
+            } else {
+                return locations;
+            }
+        };
+        eprintln!("position={:?} <==> offset={:?}", position, offset);
+        let token = syntax_tree.token_at_offset(offset.into());
+        eprintln!("current position: {:?}", token);
+        match token {
+            rowan::TokenAtOffset::None => (),
+            rowan::TokenAtOffset::Single(leaf) => {
+                let call_node = leaf
+                    .ancestors()
+                    .find(|ancestor| ancestor.kind() == SyntaxKind::ExprCall);
+                match call_node {
+                    None => (),
+                    Some(node) => locations.extend(self.get_model_declaration(&node)),
+                }
+            }
+            rowan::TokenAtOffset::Between(left, right) => (),
+        }
+
+        locations
+    }
+
     fn get_model_paths(&self) -> Vec<PathBuf> {
         get_sql_files_in_paths(&self.root_path, &self.spec.model_paths)
     }
@@ -351,6 +449,17 @@ impl DbtProject {
             .iter()
             .map(|model| model.value().name.clone())
             .collect()
+    }
+
+    fn get_model_path_from_string(&self, literal_str: &str) -> Option<PathBuf> {
+        self.models.iter().find_map(|model| {
+            let name = &model.value().name;
+            if &format!("'{literal_str}'") == name || &format!("\"{literal_str}\"") == name {
+                Some(model.key().clone())
+            } else {
+                None
+            }
+        })
     }
 
     fn get_macros(&self) -> Vec<Macro> {
