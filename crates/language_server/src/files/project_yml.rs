@@ -42,10 +42,4 @@ impl DbtProjectSpec {
         *self = Self::from_file(file_contents)?;
         Ok(())
     }
-
-    pub async fn refresh_with_path(&mut self, file_path: &Path) -> Result<(), String> {
-        let file_contents = read_file(file_path).await?;
-        self.refresh(&file_contents)?;
-        Ok(())
-    }
 }

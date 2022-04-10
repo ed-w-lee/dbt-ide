@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, InsertTextFormat, Position};
 use walkdir::WalkDir;
 
+use crate::files::macro_file::MacroFile;
+use crate::files::model_file::ModelFile;
 use crate::files::project_yml::DbtProjectSpec;
 use crate::model::Macro;
-use crate::sql_file::{is_sql_file, MacroFile, ModelFile};
-use crate::utils::SyntaxNode;
+use crate::utils::{is_sql_file, SyntaxNode};
 
 #[derive(Debug)]
 pub struct DbtProject {

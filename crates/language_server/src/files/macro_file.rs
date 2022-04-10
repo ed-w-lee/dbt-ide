@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::path::Path;
 
 use dbt_jinja_parser::lexer::tokenize;
@@ -8,50 +7,6 @@ use derivative::Derivative;
 use crate::model::{Macro, Materialization};
 use crate::position_finder::PositionFinder;
 use crate::utils::{read_file, SyntaxNode};
-
-pub fn is_sql_file(path: &Path) -> bool {
-    path.extension() == Some(OsStr::new("sql"))
-}
-
-#[derive(Derivative)]
-#[derivative(Debug)]
-/// This represents the metadata we need to track for a dbt model file.
-pub struct ModelFile {
-    pub name: String,
-    pub position_finder: PositionFinder,
-    #[derivative(Debug = "ignore")]
-    pub parsed_repr: Parse,
-}
-
-impl ModelFile {
-    pub fn from_file(file_path: &Path, file_contents: &str) -> Result<Self, String> {
-        let name = match file_path.file_stem() {
-            None => return Err(format!("no file stem found for {:?}", file_path)),
-            Some(stem) => stem.to_string_lossy(),
-        };
-        Ok(Self {
-            name: name.to_string(),
-            position_finder: PositionFinder::from_text(file_contents),
-            parsed_repr: parse(tokenize(file_contents)),
-        })
-    }
-
-    pub async fn from_file_path(file_path: &Path) -> Result<Self, String> {
-        let file_contents = read_file(file_path).await?;
-        Self::from_file(file_path, &file_contents)
-    }
-
-    pub fn refresh(&mut self, file_contents: &str) {
-        self.position_finder = PositionFinder::from_text(file_contents);
-        self.parsed_repr = parse(tokenize(file_contents));
-    }
-
-    pub async fn refresh_with_path(&mut self, file_path: &Path) -> Result<(), String> {
-        let file_contents = read_file(file_path).await?;
-        self.refresh(&file_contents);
-        Ok(())
-    }
-}
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -93,12 +48,6 @@ impl MacroFile {
         self.parsed_repr = parsed_repr;
         self.macros = macros;
         self.materializations = materializations;
-    }
-
-    pub async fn refresh_with_path(&mut self, file_path: &Path) -> Result<(), String> {
-        let file_contents = read_file(file_path).await?;
-        self.refresh(&file_contents);
-        Ok(())
     }
 
     fn macros_from_parsed(syntax_tree: &SyntaxNode) -> (Vec<Macro>, Vec<Materialization>) {

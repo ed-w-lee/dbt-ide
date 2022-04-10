@@ -6,7 +6,6 @@ mod model;
 mod position_finder;
 mod project;
 mod server;
-mod sql_file;
 mod utils;
 
 use crate::server::Backend;

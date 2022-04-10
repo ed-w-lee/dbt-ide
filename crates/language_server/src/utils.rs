@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use dbt_jinja_parser::parser::Lang;
 use tokio::fs::read;
@@ -41,4 +44,8 @@ pub fn print_node(node: SyntaxNode, indent: usize) {
             );
         }
     })
+}
+
+pub fn is_sql_file(path: &Path) -> bool {
+    path.extension() == Some(OsStr::new("sql"))
 }
