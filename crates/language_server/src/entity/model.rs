@@ -1,21 +1,11 @@
 use std::path::PathBuf;
 
 use rowan::TextRange;
-use tower_lsp::lsp_types::{Location, Range};
+use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, InsertTextFormat, Location, Range};
 
 /**
  * Inter-file metadata
  */
-
-#[derive(Debug, Clone)]
-pub struct Macro {
-    pub declaration_selection: TextRange,
-    pub declaration: TextRange,
-    pub name: Option<String>,
-    pub args: Vec<Option<String>>,
-    pub default_args: Vec<(Option<String>, Option<String>)>,
-}
-
 #[derive(Debug)]
 pub struct Materialization {
     pub name: Option<String>,

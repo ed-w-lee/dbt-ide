@@ -35,11 +35,11 @@ impl MacroFile {
     }
 
     pub async fn from_file_path(file_path: &Path) -> Result<Self, String> {
-        tracing::debug!(message = "reading file contents for file path", file_path = ?file_path);
+        tracing::trace!(message = "reading file contents for file path", file_path = ?file_path);
         let file_contents = read_file(file_path).await?;
-        tracing::debug!(message = "finished reading file contents for file path", file_path = ?file_path);
+        tracing::trace!(message = "finished reading file contents for file path", file_path = ?file_path);
         let to_return = Self::from_file(&file_contents);
-        tracing::debug!(message = "finished parsing contents of file path", file_path = ?file_path);
+        tracing::trace!(message = "finished parsing contents of file path", file_path = ?file_path);
         to_return
     }
 

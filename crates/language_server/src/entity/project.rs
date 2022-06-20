@@ -10,7 +10,7 @@ use tower_lsp::lsp_types::{
 };
 use walkdir::WalkDir;
 
-use crate::entity::Macro;
+use crate::entity::{Macro, BUILTIN_MACROS};
 use crate::files::macro_file::MacroFile;
 use crate::files::model_file::ModelFile;
 use crate::files::project_yml::DbtProjectSpec;
@@ -297,8 +297,11 @@ impl DbtProject {
                         self.get_model_names()
                             .into_iter()
                             .map(|name| CompletionItem {
-                                label: format!("'{}'", name),
+                                label: name.clone(),
+                                insert_text: Some(format!("'{}'", &name)),
                                 kind: Some(CompletionItemKind::FILE),
+                                detail: Some("Model".to_string()),
+                                sort_text: Some(format!("'{}'", &name)),
                                 ..Default::default()
                             })
                             .collect()
@@ -311,34 +314,24 @@ impl DbtProject {
     }
 
     fn get_macro_completion(&self) -> Vec<CompletionItem> {
-        self.get_macros()
+        let mut to_return: Vec<CompletionItem> = self
+            .get_macros()
             .into_iter()
-            .filter_map(|mac| {
-                mac.name.map(|macro_name| {
-                    let mut i = 0;
-                    let mut insert_text = macro_name.clone() + "(";
-                    for arg in mac.args {
-                        if i > 0 {
-                            insert_text.push_str(", ");
-                        }
-                        i = i + 1;
-                        insert_text.push_str(&format!(
-                            "${{{}:{}}}",
-                            i,
-                            arg.unwrap_or("".to_string())
-                        ));
-                    }
-                    insert_text.push(')');
-                    CompletionItem {
-                        label: macro_name,
-                        kind: Some(CompletionItemKind::FUNCTION),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        insert_text: Some(insert_text),
-                        ..Default::default()
-                    }
-                })
-            })
-            .collect()
+            .filter_map(|mac| mac.get_completion_items(None))
+            .collect();
+
+        to_return.extend(BUILTIN_MACROS.iter().map(|m| m.get_completion_items()));
+
+        to_return.extend(self.packages.iter().flat_map(|project| {
+            let project_name = &project.spec.name;
+            project
+                .get_macros()
+                .into_iter()
+                .filter_map(|mac| mac.get_completion_items(Some(&project_name)))
+                .collect::<Vec<_>>()
+        }));
+
+        to_return
     }
 
     pub fn get_completion_items(&self, path: PathBuf, position: Position) -> Vec<CompletionItem> {
