@@ -12,6 +12,7 @@ use crate::utils::read_file;
 /// This represents the metadata we need to track for a dbt model file.
 pub struct ModelFile {
     pub name: String,
+    #[derivative(Debug = "ignore")]
     pub position_finder: PositionFinder,
     #[derivative(Debug = "ignore")]
     pub parsed_repr: Parse,

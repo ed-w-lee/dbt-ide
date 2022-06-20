@@ -7,3 +7,5 @@ something
 {% endmaterialization %}
 
 {{ ref('my_first_dbt_model')}}
+
+{{ other_other_macro("test") }}

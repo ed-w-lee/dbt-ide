@@ -4,7 +4,7 @@ use dbt_jinja_parser::lexer::tokenize;
 use dbt_jinja_parser::parser::{parse, Parse, SyntaxKind};
 use derivative::Derivative;
 
-use crate::model::{Macro, Materialization};
+use crate::entity::{Macro, Materialization};
 use crate::position_finder::PositionFinder;
 use crate::utils::{get_child_of_kind, read_file, SyntaxNode, TraverseOrder};
 
@@ -12,6 +12,7 @@ use crate::utils::{get_child_of_kind, read_file, SyntaxNode, TraverseOrder};
 #[derivative(Debug)]
 /// This represents the metadata we need to track for a dbt macro file
 pub struct MacroFile {
+    #[derivative(Debug = "ignore")]
     pub position_finder: PositionFinder,
     #[derivative(Debug = "ignore")]
     pub parsed_repr: Parse,
@@ -34,8 +35,12 @@ impl MacroFile {
     }
 
     pub async fn from_file_path(file_path: &Path) -> Result<Self, String> {
+        tracing::debug!(message = "reading file contents for file path", file_path = ?file_path);
         let file_contents = read_file(file_path).await?;
-        Self::from_file(&file_contents)
+        tracing::debug!(message = "finished reading file contents for file path", file_path = ?file_path);
+        let to_return = Self::from_file(&file_contents);
+        tracing::debug!(message = "finished parsing contents of file path", file_path = ?file_path);
+        to_return
     }
 
     pub fn refresh(&mut self, file_contents: &str) {
@@ -65,13 +70,16 @@ impl MacroFile {
         (macros, materializations)
     }
 
-    fn extract_default_arg(default_arg_node: &SyntaxNode) -> (Option<String>, Option<String>) {
+    fn extract_default_arg(
+        name: &Option<String>,
+        default_arg_node: &SyntaxNode,
+    ) -> (Option<String>, Option<String>) {
         let children = default_arg_node.children_with_tokens();
         let mut seen_assign = false;
         let mut assign_target = None;
         let mut default_value = None;
         for child in children {
-            eprintln!("{:?}", child);
+            // tracing::info!(message = "examining child", ?child, macro_name = ?name);
             if !seen_assign {
                 match child.kind() {
                     SyntaxKind::ExprName => {
@@ -84,7 +92,10 @@ impl MacroFile {
                 match child.kind() {
                     SyntaxKind::Whitespace => (),
                     _ => {
-                        default_value = Some(child.into_node().unwrap().text().to_string());
+                        default_value = Some(match child {
+                            rowan::NodeOrToken::Node(node) => node.text().to_string(),
+                            rowan::NodeOrToken::Token(token) => token.text().to_string(),
+                        });
                         break;
                     }
                 }
@@ -129,7 +140,7 @@ impl MacroFile {
                             }
                         }
                         SyntaxKind::SignatureDefaultArg => {
-                            default_args.push(Self::extract_default_arg(&child))
+                            default_args.push(Self::extract_default_arg(&name, &child))
                         }
                         SyntaxKind::Whitespace => (),
                         _ => unreachable!(),

@@ -12,9 +12,10 @@ use tower_lsp::{
     },
     Client, LanguageServer,
 };
+use tracing::{event, field, info, Level};
 
 use crate::{
-    project::DbtProject,
+    entity::DbtProject,
     utils::{read_file, uri_to_path},
 };
 
@@ -28,6 +29,7 @@ pub struct Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> JsonRpcResult<InitializeResult> {
+        tracing::debug!(message = "initializing");
         let root_uri = match params.root_uri {
             None => return Err(Error::invalid_params("language server requires root uri")),
             Some(uri) => uri,
@@ -35,13 +37,15 @@ impl LanguageServer for Backend {
         let root_path = uri_to_path(&root_uri)?;
         let project = match DbtProject::find_single_project(&root_path).await {
             Err(msg) => {
+                tracing::error!(message = "failed to find single project", ?root_path);
                 return Err(Error::invalid_params(format!(
                     "language server requires dbt_project.yml to exist in path: {:?}",
                     msg
-                )))
+                )));
             }
             Ok(project) => project,
         };
+        tracing::debug!(?root_path, ?project);
         self.projects.insert(root_path.to_path_buf(), project);
 
         Ok(InitializeResult {
@@ -108,7 +112,7 @@ impl LanguageServer for Backend {
         let file_contents = &params.content_changes[0].text;
         for project in self.projects.iter() {
             if path.starts_with(project.key()) {
-                eprintln!("updating parse");
+                tracing::info!(message="parsing project", project = ?project.key());
                 match project.on_file_change(&path, file_contents) {
                     Ok(_) => (),
                     Err(e) => {

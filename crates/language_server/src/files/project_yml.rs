@@ -11,6 +11,11 @@ pub struct DbtProjectSpec {
     pub model_paths: Vec<String>,
     #[serde(rename = "macro-paths", default = "default_macro_paths")]
     pub macro_paths: Vec<String>,
+    #[serde(
+        rename = "packages-install-path",
+        default = "default_packages_install_path"
+    )]
+    pub packages_install_path: String,
 }
 
 fn default_model_paths() -> Vec<String> {
@@ -19,6 +24,10 @@ fn default_model_paths() -> Vec<String> {
 
 fn default_macro_paths() -> Vec<String> {
     vec!["macros".to_string()]
+}
+
+fn default_packages_install_path() -> String {
+    "dbt_packages".to_string()
 }
 
 impl DbtProjectSpec {

@@ -1,19 +1,23 @@
 use dashmap::DashMap;
 use dbt_jinja_parser::parser::SyntaxKind;
-use futures::future::try_join_all;
+use derivative::Derivative;
+use futures::future::{self, try_join_all};
+use futures::{TryFuture, TryFutureExt};
+use std::fs::FileType;
 use std::path::{Path, PathBuf};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, InsertTextFormat, LocationLink, Position,
 };
 use walkdir::WalkDir;
 
+use crate::entity::Macro;
 use crate::files::macro_file::MacroFile;
 use crate::files::model_file::ModelFile;
 use crate::files::project_yml::DbtProjectSpec;
-use crate::model::Macro;
 use crate::utils::{get_child_of_kind, is_sql_file, SyntaxNode, TraverseOrder};
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct DbtProject {
     root_path: PathBuf,
     spec: DbtProjectSpec,
@@ -23,6 +27,8 @@ pub struct DbtProject {
     /// Concurrent hashmap from macro file path to the in-memory
     /// parsed information for the macros.
     pub macros: DashMap<PathBuf, MacroFile>,
+    /// Installed packages
+    pub packages: DashMap<PathBuf, DbtProject>,
 }
 
 fn get_sql_files_in_paths(root_path: &Path, paths: &[String]) -> Vec<PathBuf> {
@@ -46,32 +52,28 @@ fn get_sql_files_in_paths(root_path: &Path, paths: &[String]) -> Vec<PathBuf> {
 }
 
 impl DbtProject {
+    /// searches for a single project at the root path (since dbt sucks at
+    /// disambiguating multiple projects)
     pub async fn find_single_project(root_path: &Path) -> Result<Self, String> {
-        let mut err_msg = "couldn't find dbt_project.yml".to_string();
-        for entry in WalkDir::new(root_path)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let f_name = entry.file_name().to_string_lossy();
-            if f_name == "dbt_project.yml" {
-                match DbtProject::from_root(entry.path()).await {
-                    Ok(project) => return Ok(project),
-                    Err(msg) => err_msg = msg,
-                }
+        let entry = root_path.join("dbt_project.yml");
+        if entry.exists() {
+            match DbtProject::from_root(entry.as_path()).await {
+                Ok(project) => Ok(project),
+                Err(msg) => Err(msg),
             }
+        } else {
+            Err("couldn't find dbt_project.yml".to_string())
         }
-        Err(err_msg)
     }
 
-    // TODO: better errors
-    async fn from_root(project_path: &Path) -> Result<Self, String> {
+    async fn parse_package(project_path: &Path) -> Result<Self, String> {
         let spec = DbtProjectSpec::from_file_path(project_path).await?;
         let root_path = match project_path.parent() {
             None => return Err("unexpected filesystem state".to_string()),
             Some(p) => p.to_path_buf(),
         };
 
+        tracing::debug!("parsing models");
         let models = {
             let found_model_paths = get_sql_files_in_paths(&root_path, &spec.model_paths);
 
@@ -92,6 +94,7 @@ impl DbtProject {
                 .collect()
         };
 
+        tracing::debug!("parsing macros");
         let macros = {
             let found_macro_paths = get_sql_files_in_paths(&root_path, &spec.macro_paths);
 
@@ -117,7 +120,68 @@ impl DbtProject {
             spec,
             models,
             macros,
+            packages: DashMap::new(),
         })
+    }
+
+    // TODO: better errors
+    async fn from_root(project_path: &Path) -> Result<Self, String> {
+        let mut project = Self::parse_package(project_path).await?;
+
+        project.packages = {
+            let mut packages = vec![];
+            let install_path = Path::new(&project.spec.packages_install_path);
+            let entries = match install_path.read_dir() {
+                Ok(entries) => entries,
+                Err(e) => return Err(format!("failed to get installed packages: {}", e)),
+            };
+            for entry in entries {
+                match entry {
+                    Ok(entry) => match entry.file_type() {
+                        Ok(file_type) => {
+                            if file_type.is_dir() {
+                                let possible_package = entry.path().join("dbt_project.yml");
+                                tracing::debug!(?possible_package);
+                                if possible_package.exists() {
+                                    match DbtProject::parse_package(&possible_package).await {
+                                        Ok(package) => {
+                                            packages.push((entry.path().to_owned(), package))
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                message = "failed to parse package",
+                                                path = ?possible_package,
+                                                error = ?e
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        message = "couldn't find dbt_project.yml",
+                                        ?entry
+                                    );
+                                }
+                            } else {
+                                tracing::debug!(
+                                    message = "found non-directory in packages install",
+                                    ?entry,
+                                    ?file_type
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(message = "unable to read file type for entry", ?entry, error = ?e);
+                        }
+                    },
+                    Err(ref e) => {
+                        tracing::warn!(message = "failed to get entry after readdir", ?entry, error = ?e);
+                    }
+                }
+            }
+            packages.into_iter().collect()
+        };
+
+        Ok(project)
     }
 
     pub fn on_file_open(&self, path: &Path, file_contents: &str) -> Result<(), String> {
@@ -284,7 +348,10 @@ impl DbtProject {
             if self.is_file_model(&path) {
                 match self.models.get(&path) {
                     None => {
-                        eprintln!("couldn't find model corresponding to path={:?}", path);
+                        tracing::error!(
+                            message = "couldn't find model corresponding to path",
+                            path = ?path
+                        );
                         return completion_items;
                     }
                     Some(model_file) => (
@@ -295,7 +362,7 @@ impl DbtProject {
             } else if self.is_file_macro(&path) {
                 match self.macros.get(&path) {
                     None => {
-                        eprintln!("couldn't find macro corresponding to path={:?}", path);
+                        tracing::error!(message = "couldn't find macro corresponding to path", path = ?path);
                         return completion_items;
                     }
                     Some(macro_file) => (
@@ -307,9 +374,13 @@ impl DbtProject {
                 return completion_items;
             }
         };
-        eprintln!("position={:?} <==> offset={:?}", position, offset);
+        tracing::debug!(
+            message = "map from position to offset",
+            position = ?position,
+            offset = ?offset
+        );
         let token = syntax_tree.token_at_offset(offset.into());
-        eprintln!("current position: {:?}", token);
+        tracing::debug!(message = "current token", token = ?token);
         match token {
             rowan::TokenAtOffset::None => (),
             rowan::TokenAtOffset::Single(leaf) => {}
@@ -331,7 +402,7 @@ impl DbtProject {
                     })
                     .is_some()
                 {
-                    eprintln!("looking for macros {:#?}", self.macros);
+                    tracing::debug!(message = "looking for macros", macros = ?self.macros);
                     completion_items.extend(self.get_macro_completion());
                 }
             }
@@ -393,7 +464,10 @@ impl DbtProject {
             if self.is_file_model(&path) {
                 match self.models.get(&path) {
                     None => {
-                        eprintln!("couldn't find model corresponding to path={:?}", path);
+                        tracing::error!(
+                            message = "couldn't find model corresponding to path",
+                            path = ?path
+                        );
                         return locations;
                     }
                     Some(model_file) => (
@@ -404,7 +478,7 @@ impl DbtProject {
             } else if self.is_file_macro(&path) {
                 match self.macros.get(&path) {
                     None => {
-                        eprintln!("couldn't find macro corresponding to path={:?}", path);
+                        tracing::error!(message= "couldn't find macro corresponding to path", path=?path);
                         return locations;
                     }
                     Some(macro_file) => (
@@ -416,9 +490,9 @@ impl DbtProject {
                 return locations;
             }
         };
-        eprintln!("position={:?} <==> offset={:?}", position, offset);
+        tracing::debug!(message = "position to offset", ?position, ?offset);
         let token = syntax_tree.token_at_offset(offset.into());
-        eprintln!("current position: {:?}", token);
+        tracing::debug!(message = "token at offset", ?token);
         match token {
             rowan::TokenAtOffset::None => (),
             rowan::TokenAtOffset::Single(leaf) => {
